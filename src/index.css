@@ -40,6 +40,122 @@
   animation: wobble 1.2s ease-in-out infinite;
 }
 
+/* ---------------------------------------------------------------
+   2.5D TREEHOUSE ROOM SHELL
+   The room is drawn entirely in CSS so it needs no image assets and
+   cannot be blocked by any asset loading policy.
+   --------------------------------------------------------------- */
+
+/* Back wall: horizontal log courses. Each course gets a top highlight and
+   a bottom shadow stop so the logs read as round rather than as stripes. */
+.room-wall-logs {
+  background-image:
+    /* vertical corner shading so the wall turns away at both edges */
+    linear-gradient(
+      to right,
+      rgba(28, 10, 0, 0.55) 0%,
+      rgba(28, 10, 0, 0.08) 18%,
+      rgba(255, 214, 145, 0.06) 50%,
+      rgba(28, 10, 0, 0.08) 82%,
+      rgba(28, 10, 0, 0.55) 100%
+    ),
+    /* the log courses themselves — a highlight along the top of each log and a
+       deep shadow in the groove below it, so they read as round timber */
+    repeating-linear-gradient(
+      to bottom,
+      #5c2c06 0px,
+      #a9631d 3px,
+      #d08c3a 10px,
+      #b06d24 20px,
+      #8a4a12 30px,
+      #5c2c06 38px,
+      #3a1a02 42px,
+      #5c2c06 44px
+    );
+}
+
+/* Floor plane: plank seams that converge because the element itself is
+   rotated in 3D by the stage. */
+.room-floor-planks {
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      rgba(28, 10, 0, 0.45) 0px,
+      rgba(28, 10, 0, 0.45) 3px,
+      transparent 3px,
+      transparent 64px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      #b4762f 0px,
+      #a2661f 30px,
+      #8c5217 62px,
+      #7a4310 96px
+    );
+}
+
+/* Contact gradient where the floor meets the wall, so there is no hard seam. */
+.room-baseboard-blend {
+  background-image: linear-gradient(
+    to bottom,
+    rgba(28, 10, 0, 0.7) 0%,
+    rgba(28, 10, 0, 0.25) 45%,
+    rgba(28, 10, 0, 0) 100%
+  );
+}
+
+/* Cartoon speech bubble with a hand-drawn-looking tail. */
+.speech-bubble {
+  position: relative;
+}
+
+.speech-bubble::after,
+.speech-bubble::before {
+  content: '';
+  position: absolute;
+  left: 42px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
+
+/* Outer (border-coloured) tail, pointing up toward the room above */
+.speech-bubble::before {
+  top: -22px;
+  border-width: 0 18px 22px 0;
+  border-color: transparent transparent #451a03 transparent;
+}
+
+/* Inner (fill-coloured) tail, inset so the outer reads as a border */
+.speech-bubble::after {
+  top: -14px;
+  border-width: 0 12px 15px 0;
+  border-color: transparent transparent #fffbeb transparent;
+}
+
+/* The room stage must not scroll or text-select while a child drags an item. */
+.room-stage {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.room-item-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 18px 12px rgba(0, 0, 0, 0.45));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float,
+  .animate-pulse-subtle,
+  .animate-wobble,
+  .animate-spin-slow,
+  .animate-bounce-subtle {
+    animation: none !important;
+  }
+}
+
 /* Custom scrollbars for kids UI */
 ::-webkit-scrollbar {
   width: 10px;
