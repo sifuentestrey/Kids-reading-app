@@ -35,9 +35,8 @@ import {
   getItemBand,
 } from './roomLayout';
 import { useRoomDrag } from './useRoomDrag';
+import { RoomShell, TimeOfDay } from './RoomShell';
 import { Sun, Moon, Sunset, Sunrise, Move, Lock, Unlock, RotateCcw } from 'lucide-react';
-
-type TimeOfDay = 'morning' | 'daytime' | 'sunset' | 'night';
 
 /** Reserved layout id for the child's avatar. */
 const AVATAR_LAYOUT_ID = '__avatar';
@@ -54,75 +53,45 @@ interface TreehouseRoomStageProps {
 }
 
 /**
- * One source of truth for how the room looks at each time of day: wall wash,
- * floor wash, whole-room ambient light, and the view through the window.
+ * Per-time-of-day data the stage still owns: the label and voiceover line, the
+ * HUD swatch, and the room-wide ambient wash that tints the furniture along with
+ * the shell. The sky, window view and surface lighting live in RoomShell.
  */
 const TIME_THEMES: Record<
   TimeOfDay,
-  {
-    label: string;
-    speech: string;
-    wall: string;
-    floor: string;
-    ambient: string;
-    sky: string;
-    Icon: typeof Sun;
-    swatch: string;
-  }
+  { label: string; speech: string; ambient: string; Icon: typeof Sun; swatch: string }
 > = {
   morning: {
     label: 'Sunrise',
     speech: 'Sunrise! Warm morning light is filling the treehouse.',
-    wall: 'bg-gradient-to-b from-orange-300/35 via-amber-200/15 to-transparent',
-    floor: 'bg-gradient-to-b from-amber-300/25 to-orange-900/20',
-    ambient: 'bg-gradient-to-br from-orange-400/20 via-transparent to-amber-900/15',
-    sky: 'bg-gradient-to-b from-indigo-400 via-orange-300 to-amber-200',
+    ambient: 'bg-gradient-to-br from-orange-300/18 via-transparent to-amber-900/10',
     Icon: Sunrise,
     swatch: 'bg-orange-300',
   },
   daytime: {
     label: 'Daytime',
     speech: 'Bright sunny daytime in the treehouse!',
-    wall: 'bg-gradient-to-b from-sky-200/25 via-transparent to-transparent',
-    floor: 'bg-gradient-to-b from-amber-100/20 to-amber-900/15',
-    ambient: 'bg-gradient-to-b from-sky-200/10 via-transparent to-amber-950/10',
-    sky: 'bg-gradient-to-b from-sky-400 via-sky-200 to-sky-100',
+    ambient: 'bg-gradient-to-b from-sky-100/8 via-transparent to-amber-950/8',
     Icon: Sun,
     swatch: 'bg-sky-300',
   },
   sunset: {
     label: 'Sunset',
     speech: 'Golden hour! The whole treehouse glows orange and pink.',
-    wall: 'bg-gradient-to-b from-rose-500/35 via-orange-400/20 to-indigo-900/20',
-    floor: 'bg-gradient-to-b from-rose-500/25 to-indigo-950/35',
-    ambient: 'bg-gradient-to-br from-rose-500/25 via-amber-500/10 to-indigo-950/30',
-    sky: 'bg-gradient-to-b from-indigo-700 via-rose-500 to-amber-300',
+    ambient: 'bg-gradient-to-br from-rose-500/22 via-amber-500/8 to-indigo-950/22',
     Icon: Sunset,
     swatch: 'bg-rose-400',
   },
   night: {
     label: 'Night',
     speech: 'Starry night! Time for cosy bedtime stories.',
-    wall: 'bg-gradient-to-b from-indigo-950/70 via-slate-900/55 to-slate-900/45',
-    floor: 'bg-gradient-to-b from-indigo-950/55 to-slate-950/65',
-    ambient: 'bg-gradient-to-b from-indigo-950/55 via-slate-900/35 to-amber-950/45',
-    sky: 'bg-gradient-to-b from-slate-950 via-indigo-950 to-indigo-900',
+    ambient: 'bg-gradient-to-b from-indigo-950/45 via-slate-900/30 to-slate-950/40',
     Icon: Moon,
     swatch: 'bg-indigo-400',
   },
 };
 
 const TIME_ORDER: TimeOfDay[] = ['morning', 'daytime', 'sunset', 'night'];
-
-/** Fixed star field for the night window — stable across renders. */
-const WINDOW_STARS = [
-  { top: '18%', left: '20%', size: 3, delay: '0s' },
-  { top: '30%', left: '64%', size: 2, delay: '0.6s' },
-  { top: '12%', left: '46%', size: 2, delay: '1.2s' },
-  { top: '44%', left: '30%', size: 2.5, delay: '0.3s' },
-  { top: '26%', left: '80%', size: 2, delay: '0.9s' },
-  { top: '52%', left: '70%', size: 2, delay: '1.5s' },
-];
 
 export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
   currentProfile,
@@ -245,48 +214,48 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
   const renderFurnitureGraphic = (item: TreehouseItem) => {
     switch (item.id) {
       case 'treehouse_bed':
-        return <TreehouseBedGraphic className="w-28 h-28 sm:w-36 sm:h-36" />;
+        return <TreehouseBedGraphic className="w-44 h-44 sm:w-52 sm:h-52" />;
       case 'comfy_couch':
-        return <ComfyCouchGraphic className="w-28 h-24 sm:w-36 sm:h-30" />;
+        return <ComfyCouchGraphic className="w-44 h-34 sm:w-52 sm:h-40" />;
       case 'bookshelf_nook':
-        return <BookshelfGraphic className="w-24 h-28 sm:w-30 sm:h-36" />;
+        return <BookshelfGraphic className="w-32 h-40 sm:w-40 sm:h-48" />;
       case 'star_telescope':
-        return <TelescopeGraphic className="w-24 h-28 sm:w-28 sm:h-32" />;
+        return <TelescopeGraphic className="w-30 h-34 sm:w-36 sm:h-40" />;
       case 'stuffed_bear':
-        return <TeddyBearGraphic className="w-20 h-24 sm:w-24 sm:h-28" />;
+        return <TeddyBearGraphic className="w-26 h-30 sm:w-30 sm:h-36" />;
       case 'wooden_train':
         return (
           <div className={isTrainChugging ? 'animate-bounce-subtle' : ''}>
-            <WoodenTrainGraphic className="w-28 h-18 sm:w-36 sm:h-22" />
+            <WoodenTrainGraphic className="w-40 h-24 sm:w-48 sm:h-28" />
           </div>
         );
       case 'phonics_desk':
-        return <PhonicsDeskGraphic className="w-28 h-28 sm:w-34 sm:h-34" />;
+        return <PhonicsDeskGraphic className="w-40 h-40 sm:w-48 sm:h-48" />;
       case 'secret_tent':
       case 'play_tent':
-        return <SecretTentGraphic className="w-28 h-32 sm:w-36 sm:h-36" />;
+        return <SecretTentGraphic className="w-40 h-44 sm:w-48 sm:h-52" />;
       case 'treehouse_hammock':
-        return <HammockGraphic className="w-36 h-22 sm:w-40 sm:h-22" />;
+        return <HammockGraphic className="w-48 h-26 sm:w-56 sm:h-30" />;
       case 'potted_plant':
-        return <PottedPlantGraphic className="w-20 h-24 sm:w-22 sm:h-26" />;
+        return <PottedPlantGraphic className="w-26 h-32 sm:w-30 sm:h-36" />;
       case 'retro_tv':
-        return <RetroTvGraphic className="w-26 h-26 sm:w-30 sm:h-30" isPlaying={isTvPlaying} />;
+        return <RetroTvGraphic className="w-36 h-36 sm:w-44 sm:h-44" isPlaying={isTvPlaying} />;
       case 'lava_lamp':
-        return <LavaLampGraphic className="w-16 h-26 sm:w-18 sm:h-30" colorIndex={lavaLampColorIndex} />;
+        return <LavaLampGraphic className="w-20 h-32 sm:w-24 sm:h-36" colorIndex={lavaLampColorIndex} />;
       case 'neon_star':
-        return <NeonStarGraphic className="w-22 h-26 sm:w-26 sm:h-30" />;
+        return <NeonStarGraphic className="w-26 h-30 sm:w-32 sm:h-34" />;
       case 'glowing_aquarium':
-        return <AquariumGraphic className="w-28 h-24 sm:w-34 sm:h-30" />;
+        return <AquariumGraphic className="w-40 h-32 sm:w-48 sm:h-40" />;
       case 'retro_jukebox':
-        return <JukeboxGraphic className="w-26 h-30 sm:w-30 sm:h-34" />;
+        return <JukeboxGraphic className="w-34 h-40 sm:w-40 sm:h-48" />;
       case 'fairy_lights':
-        return <FairyLightsGraphic className="w-48 h-12" />;
+        return <FairyLightsGraphic className="w-64 h-16" />;
       case 'disco_ball':
-        return <DiscoBallGraphic className="w-24 h-28" />;
+        return <DiscoBallGraphic className="w-30 h-36" />;
       case 'magic_wand_toy':
-        return <MagicWandGraphic className="w-20 h-24" />;
+        return <MagicWandGraphic className="w-24 h-30" />;
       case 'rainbow_rug':
-        return <RainbowRugGraphic className="w-56 h-24 sm:w-64 sm:h-26" />;
+        return <RainbowRugGraphic className="w-72 h-32 sm:w-80 sm:h-36" />;
       default:
         return (
           <div className="px-3 py-2 bg-amber-50 border-3 border-amber-950 rounded-2xl shadow-cartoon-sm flex items-center gap-2">
@@ -395,7 +364,7 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
             )}
             <div className="absolute bottom-0 w-14 h-3.5 bg-black/45 rounded-[50%] blur-[2px] pointer-events-none" />
             <div className="animate-bounce-subtle transition-transform group-hover/pet:scale-110">
-              <RoomPetGraphic species={pet.species} className="w-16 h-16 sm:w-20 sm:h-20" />
+              <RoomPetGraphic species={pet.species} className="w-20 h-20 sm:w-24 sm:h-24" />
             </div>
             <span className="opacity-0 group-hover/pet:opacity-100 transition-opacity bg-emerald-500 text-amber-950 border-2 border-amber-950 font-display font-black text-[9px] px-2 py-0.5 rounded-full shadow-cartoon-sm whitespace-nowrap">
               {pet.name}
@@ -440,7 +409,7 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
             equippedHatId={currentProfile.equippedHat}
             equippedOutfitId={currentProfile.equippedOutfit}
             equippedAccessoryId={currentProfile.equippedAccessory}
-            className="w-28 h-40 sm:w-34 sm:h-48"
+            className="w-32 h-44 sm:w-36 sm:h-52"
           />
 
           {/* Name tag tucked against the character's feet. */}
@@ -473,17 +442,15 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
       ref={stageRef}
       className="room-stage relative w-full h-[440px] sm:h-[500px] rounded-3xl border-4 border-amber-950 overflow-hidden shadow-cartoon-lg bg-amber-950"
     >
-      {/* ============ ROOM SHELL ============ */}
+      {/* ============ ROOM SHELL ============
+          One SVG drawing the whole room in perspective: walls, ceiling beams,
+          floor, window, and trim. See RoomShell.tsx for the geometry contract
+          it shares with roomLayout's floor band. */}
+      <RoomShell timeOfDay={timeOfDay} />
 
-      {/* Back wall: log courses, drawn in CSS so no asset can fail to load. */}
-      <div className="room-wall-logs absolute inset-x-0 top-0 h-[56%]" />
-
-      {/* Wall wash for the current time of day. */}
-      <div
-        className={`absolute inset-x-0 top-0 h-[56%] transition-colors duration-700 ${theme.wall}`}
-      />
-
-      {/* Circular window, centred on the back wall. */}
+      {/* Clickable window: the art lives in RoomShell, this is just the hit
+          target sitting over it. Its geometry mirrors the shell's viewBox —
+          circle at (500,168) r=96 of 1000x560. */}
       <button
         type="button"
         onClick={() => {
@@ -491,109 +458,52 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
           changeTimeOfDay(next);
         }}
         title="Click the window to change the time of day"
-        className="absolute left-1/2 -translate-x-1/2 top-[14%] w-36 h-36 sm:w-44 sm:h-44 rounded-full border-[10px] border-amber-950 overflow-hidden shadow-[inset_0_6px_18px_rgba(0,0,0,0.55)] z-[6]"
-      >
-        {/* Sky */}
-        <span className={`absolute inset-0 transition-colors duration-700 ${theme.sky}`} />
-
-        {/* Sun, for the daylight modes */}
-        {timeOfDay !== 'night' && (
-          <span
-            className={`absolute rounded-full blur-[1px] ${
-              timeOfDay === 'daytime'
-                ? 'top-4 right-6 w-10 h-10 bg-yellow-200'
-                : timeOfDay === 'morning'
-                ? 'bottom-10 left-1/2 -translate-x-1/2 w-12 h-12 bg-amber-100'
-                : 'bottom-8 left-1/2 -translate-x-1/2 w-14 h-14 bg-yellow-200'
-            }`}
-          />
-        )}
-
-        {/* Crescent moon: a bright disc with an offset sky-coloured disc
-            carving the crescent out of it. */}
-        {timeOfDay === 'night' && (
-          <span className="absolute top-5 right-6 w-11 h-11">
-            <span className="absolute inset-0 rounded-full bg-yellow-100 shadow-[0_0_18px_6px_rgba(254,240,138,0.55)]" />
-            <span className="absolute -top-1 -right-2 w-10 h-10 rounded-full bg-indigo-950" />
-          </span>
-        )}
-
-        {/* Stars */}
-        {timeOfDay === 'night' &&
-          WINDOW_STARS.map((star, index) => (
-            <span
-              key={index}
-              className="absolute rounded-full bg-yellow-50 animate-pulse"
-              style={{
-                top: star.top,
-                left: star.left,
-                width: `${star.size}px`,
-                height: `${star.size}px`,
-                animationDelay: star.delay,
-              }}
-            />
-          ))}
-
-        {/* Distant forest canopy across the bottom of the view */}
-        <span
-          className={`absolute -bottom-3 inset-x-0 h-14 rounded-t-[100%] ${
-            timeOfDay === 'night' ? 'bg-emerald-950' : 'bg-emerald-700'
-          }`}
-        />
-        <span
-          className={`absolute -bottom-2 -left-2 h-10 w-16 rounded-t-[100%] ${
-            timeOfDay === 'night' ? 'bg-emerald-900' : 'bg-emerald-600'
-          }`}
-        />
-
-        {/* Window muntins */}
-        <span className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[5px] bg-amber-950/80" />
-        <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[5px] bg-amber-950/80" />
-      </button>
-
-      {/* Floor: a separate plane tilted in 3D so the plank seams converge
-          instead of meeting the wall at a flat horizontal line. */}
-      <div
-        className="absolute inset-x-0 bottom-0 h-[52%] z-[2]"
-        style={{ perspective: '900px', perspectiveOrigin: 'center top' }}
-      >
-        <div
-          className="room-floor-planks absolute inset-x-[-30%] top-0 h-[200%] origin-top"
-          style={{ transform: 'rotateX(64deg)' }}
-        />
-
-      </div>
-
-      {/* Skirting board: makes the wall-to-floor join a deliberate edge rather
-          than the flat seam this room used to have. */}
-      <div className="absolute inset-x-0 top-[52%] -translate-y-full h-3 z-[5] bg-gradient-to-b from-amber-800 to-amber-950 border-y-2 border-amber-950/70 pointer-events-none" />
-
-      {/* Placement grid, shown only while decorating. It shares the floor's 3D
-          transform so the guide lines recede with the room, and sits above the
-          floor wash so it stays readable at every time of day. */}
-      {canDrag && (
-        <div
-          className="absolute inset-x-0 bottom-0 h-[52%] z-[6] pointer-events-none"
-          style={{ perspective: '900px', perspectiveOrigin: 'center top' }}
-        >
-          <div
-            className="absolute inset-x-[-30%] top-0 h-[200%] origin-top"
-            style={{
-              transform: 'rotateX(64deg)',
-              backgroundImage:
-                'repeating-linear-gradient(to right, rgba(253,224,71,0.7) 0 2px, transparent 2px 110px), repeating-linear-gradient(to bottom, rgba(253,224,71,0.7) 0 2px, transparent 2px 110px)',
-            }}
-          />
-        </div>
-      )}
-
-      {/* Floor wash for the current time of day. */}
-      <div
-        className={`absolute inset-x-0 bottom-0 h-[52%] z-[3] transition-colors duration-700 ${theme.floor}`}
+        aria-label="Change the time of day"
+        className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 top-[30%] w-[19.2%] h-[34.3%] rounded-full z-[6] hover:bg-amber-50/10 transition-colors"
       />
 
-      {/* Soft contact shading where floor meets wall. */}
-      <div className="room-baseboard-blend absolute inset-x-0 top-[48%] h-16 z-[4] pointer-events-none" />
+      {/* Placement grid, shown only while decorating. It matches the shell's
+          floor: lines run from the wall base out to the front edge, so the guide
+          recedes with the room instead of lying flat across it. */}
+      {canDrag && (
+        <svg
+          viewBox="0 0 1000 560"
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full z-[6] pointer-events-none"
+        >
+          {Array.from({ length: 9 }, (_, i) => {
+            const t = i / 8;
+            return (
+              <line
+                key={`g-${i}`}
+                x1={150 + t * 700}
+                y1={300}
+                x2={-120 + t * 1240}
+                y2={560}
+                stroke="#FDE047"
+                strokeWidth="2"
+                opacity="0.55"
+              />
+            );
+          })}
+          {[0.12, 0.3, 0.52, 0.78].map((t, i) => {
+            const y = 300 + t * 260;
+            const spread = t * 150;
+            return (
+              <line
+                key={`gc-${i}`}
+                x1={150 - spread}
+                y1={y}
+                x2={850 + spread}
+                y2={y}
+                stroke="#FDE047"
+                strokeWidth="2"
+                opacity="0.55"
+              />
+            );
+          })}
+        </svg>
+      )}
 
       {/* ============ PLACED ITEMS, PETS, AVATAR ============ */}
       {entities.map((entity) => (
