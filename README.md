@@ -67,6 +67,18 @@ Heroku with only the manifest swapped.
 Locally, copy `.env.example` to `.env` and set the same keys. Both are optional;
 without them the app uses the browser voice and nothing breaks.
 
+## Voices
+
+Speech uses the studio TTS voice when a Node deployment and an API key are
+present, and the device's own speech synthesis otherwise. The browser voice is
+chosen deliberately in `src/services/browserVoice.ts` rather than left to the
+platform: every platform still ships its 1980s formant synthesisers (macOS
+"Fred", iOS "Eloquence" and the "Compact" variants) and some browsers pick one
+of them by default, which is what makes an app sound broken. The ranking prefers
+neural and cloud voices, and scores the novelty voices below everything so a
+child never hears one. `npm test` checks that ranking against real iPadOS,
+Android and Edge voice lists.
+
 ## Progress is stored per device
 
 Profiles, Star Gems, and room layouts live in `localStorage` under
@@ -84,6 +96,7 @@ links:
 | --- | --- |
 | Dev server | `npm run dev` (Express + Vite middleware via `tsx server.ts`) |
 | Typecheck | `npx tsc --noEmit` |
+| Tests | `npm test` |
 | Build (client + server) | `npm run build` |
 | Build (client only) | `npm run build:static` |
 | Serve the production build | `npm start` |
