@@ -12,23 +12,51 @@ import { MiniGameModal } from './components/MiniGameModal';
 import { ParentPortal } from './components/ParentPortal';
 import { DiagnosticTestModal } from './components/DiagnosticTestModal';
 import { soundService } from './services/soundService';
+import { getDefaultSlot } from './components/room/roomLayout';
+
+const STORAGE_KEY = 'read_with_me_profiles_v5';
+const LEGACY_STORAGE_KEY = 'read_with_me_profiles_v4';
+
+/**
+ * Give every placed item a position. Rooms saved before item positions were
+ * persisted only recorded *which* items were placed, so seed those from the
+ * default slots rather than dropping them all in the middle of the floor.
+ */
+const withSeededLayout = (profile: LearnerProfile): LearnerProfile => {
+  const existing = profile.placedItemLayout ?? [];
+  const known = new Set(existing.map((entry) => entry.itemId));
+  const seeded = (profile.placedTreehouseItems ?? [])
+    .filter((itemId) => !known.has(itemId))
+    .map((itemId) => ({ itemId, ...getDefaultSlot(itemId) }));
+
+  // Drop layout entries for items that are no longer in the room. Reserved
+  // ids (the avatar) are prefixed with __ and always survive.
+  const placed = new Set(profile.placedTreehouseItems ?? []);
+  const kept = existing.filter(
+    (entry) => entry.itemId.startsWith('__') || placed.has(entry.itemId)
+  );
+
+  return { ...profile, placedItemLayout: [...kept, ...seeded] };
+};
 
 export function App() {
   const [profiles, setProfiles] = useState<LearnerProfile[]>(() => {
-    const saved = localStorage.getItem('read_with_me_profiles_v4');
+    const saved =
+      localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
     if (saved) {
       try {
         const parsed: LearnerProfile[] = JSON.parse(saved);
         return parsed.map((p) => {
           const initP = INITIAL_PROFILES.find((i) => i.id === p.id);
           const isCustom = p.avatar && (p.avatar.startsWith('data:') || p.avatar.startsWith('blob:'));
-          return initP ? { ...p, avatar: isCustom ? p.avatar : initP.avatar } : p;
+          const merged = initP ? { ...p, avatar: isCustom ? p.avatar : initP.avatar } : p;
+          return withSeededLayout(merged);
         });
       } catch {
-        return INITIAL_PROFILES;
+        return INITIAL_PROFILES.map(withSeededLayout);
       }
     }
-    return INITIAL_PROFILES;
+    return INITIAL_PROFILES.map(withSeededLayout);
   });
 
   const [activeProfileId, setActiveProfileId] = useState<LearnerId>('tru');
@@ -44,7 +72,7 @@ export function App() {
   const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('read_with_me_profiles_v4', JSON.stringify(profiles));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
   }, [profiles]);
 
   const handleResetKidsProgress = (childId?: LearnerId) => {
@@ -53,10 +81,10 @@ export function App() {
         if (childId && p.id !== childId) return p;
         const fresh = INITIAL_PROFILES.find((i) => i.id === p.id) || p;
         const isCustomAvatar = p.avatar && (p.avatar.startsWith('data:') || p.avatar.startsWith('blob:'));
-        return {
+        return withSeededLayout({
           ...fresh,
           avatar: isCustomAvatar ? p.avatar : fresh.avatar,
-        };
+        });
       })
     );
     setActiveMapLevel(1);
@@ -120,12 +148,16 @@ export function App() {
           i.id === itemId ? { ...i, unlocked: true } : i
         );
 
-        return {
+        const alreadyPlaced = p.placedTreehouseItems.includes(itemId);
+
+        return withSeededLayout({
           ...p,
           starGems: p.starGems - price,
           treehouseItems: updatedItems,
-          placedTreehouseItems: [...p.placedTreehouseItems, itemId],
-        };
+          placedTreehouseItems: alreadyPlaced
+            ? p.placedTreehouseItems
+            : [...p.placedTreehouseItems, itemId],
+        });
       })
     );
   };
@@ -140,9 +172,39 @@ export function App() {
           ? p.placedTreehouseItems.filter((id) => id !== itemId)
           : [...p.placedTreehouseItems, itemId];
 
-        return { ...p, placedTreehouseItems: newPlaced };
+        // withSeededLayout adds a slot for a newly placed item and prunes the
+        // slot of one that was just taken out of the room.
+        return withSeededLayout({ ...p, placedTreehouseItems: newPlaced });
       })
     );
+  };
+
+  /** Commit a dragged item's new spot in the room. */
+  const handleMoveTreehouseItem = (itemId: string, x: number, y: number) => {
+    setProfiles((prev) =>
+      prev.map((p) => {
+        if (p.id !== activeProfileId) return p;
+
+        const layout = p.placedItemLayout ?? [];
+        const hasEntry = layout.some((entry) => entry.itemId === itemId);
+
+        return {
+          ...p,
+          placedItemLayout: hasEntry
+            ? layout.map((entry) => (entry.itemId === itemId ? { ...entry, x, y } : entry))
+            : [...layout, { itemId, x, y }],
+        };
+      })
+    );
+  };
+
+  const handleResetRoomLayout = () => {
+    setProfiles((prev) =>
+      prev.map((p) =>
+        p.id === activeProfileId ? withSeededLayout({ ...p, placedItemLayout: [] }) : p
+      )
+    );
+    soundService.playSuccessChime();
   };
 
   const handleEquipItem = (itemId: string, category: 'hat' | 'outfit' | 'accessory') => {
@@ -239,6 +301,8 @@ export function App() {
           currentProfile={currentProfile}
           onBuyItem={handleBuyTreehouseItem}
           onPlaceItem={handlePlaceTreehouseItem}
+          onMoveItem={handleMoveTreehouseItem}
+          onResetRoomLayout={handleResetRoomLayout}
           onEquipItem={handleEquipItem}
           onLaunchMiniGame={(gameId: string) => setActiveMiniGameId(gameId)}
           onClose={() => setShowTreehouse(false)}

@@ -5,10 +5,21 @@ import { soundService } from '../services/soundService';
 import { AvatarImage } from './AvatarImage';
 import { TreehouseRoomStage } from './room/TreehouseRoomStage';
 
+type StoreTab = 'room' | 'wardrobe' | 'decor' | 'minigames';
+
+const TABS: { id: StoreTab; label: string; Icon: typeof Home }[] = [
+  { id: 'room', label: 'Treehouse Room', Icon: Home },
+  { id: 'wardrobe', label: 'Clothes Closet', Icon: Shirt },
+  { id: 'decor', label: 'Furniture Shop', Icon: Palette },
+  { id: 'minigames', label: 'Arcade Games', Icon: Gamepad2 },
+];
+
 interface TreehouseStoreProps {
   currentProfile: LearnerProfile;
   onBuyItem: (itemId: string, price: number) => void;
   onPlaceItem: (itemId: string) => void;
+  onMoveItem: (itemId: string, x: number, y: number) => void;
+  onResetRoomLayout: () => void;
   onEquipItem: (itemId: string, category: 'hat' | 'outfit' | 'accessory') => void;
   onLaunchMiniGame: (gameId: string) => void;
   onClose: () => void;
@@ -18,11 +29,13 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
   currentProfile,
   onBuyItem,
   onPlaceItem,
+  onMoveItem,
+  onResetRoomLayout,
   onEquipItem,
   onLaunchMiniGame,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'room' | 'wardrobe' | 'decor' | 'minigames'>('room');
+  const [activeTab, setActiveTab] = useState<StoreTab>('room');
   const [roomCategoryFilter, setRoomCategoryFilter] = useState<'all' | 'furniture' | 'toy' | 'decor'>('all');
   const [wardrobeCategory, setWardrobeCategory] = useState<'all' | 'hat' | 'outfit' | 'accessory'>('all');
   const [activeSpeechText, setActiveSpeechText] = useState<string>(
@@ -51,42 +64,14 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
     .map((id) => getItem(id))
     .filter((item): item is TreehouseItem => item !== undefined);
 
+  /**
+   * Fills the inspection bubble. The stage already reads the text aloud when an
+   * item is tapped, so this must not speak again or every tap is doubled.
+   */
   const handleRoomItemClick = (title: string, text: string) => {
     soundService.playPopSound();
-    setActiveSpeechText(`"${title}" — ${text}`);
-    soundService.speak(text);
+    setActiveSpeechText(`${title} — ${text}`);
   };
-
-  // Fixed 2.5D Room Slot Coordinates (left %, top %, zIndex, scale/style)
-  const itemSlotCoordinates: Record<string, { left: string; top: string; zIndex: number; scale?: string }> = {
-    // Ceiling & High Wall
-    fairy_lights: { left: '50%', top: '6%', zIndex: 40 },
-    disco_ball: { left: '50%', top: '16%', zIndex: 42 },
-    treehouse_hammock: { left: '50%', top: '26%', zIndex: 18 },
-    
-    // Wall Nooks
-    bookshelf_nook: { left: '14%', top: '28%', zIndex: 15 },
-    star_telescope: { left: '85%', top: '32%', zIndex: 16 },
-
-    // Middle/Back Floor
-    treehouse_bed: { left: '16%', top: '54%', zIndex: 20 },
-    secret_tent: { left: '82%', top: '56%', zIndex: 22 },
-    
-    // Main Floor Areas
-    rainbow_rug: { left: '50%', top: '72%', zIndex: 10 },
-    comfy_couch: { left: '28%', top: '68%', zIndex: 25 },
-    phonics_desk: { left: '20%', top: '80%', zIndex: 35 },
-    stuffed_bear: { left: '36%', top: '78%', zIndex: 32 },
-    wooden_train: { left: '68%', top: '82%', zIndex: 36 },
-    potted_plant: { left: '88%', top: '75%', zIndex: 33 },
-  };
-
-  // 2.5D Coordinates for Unlocked Pets roaming the floor
-  const petCoordinates = [
-    { left: '38%', top: '66%', zIndex: 28 },
-    { left: '62%', top: '70%', zIndex: 29 },
-    { left: '78%', top: '68%', zIndex: 31 },
-  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in overflow-y-auto">
@@ -107,8 +92,8 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-1.5 bg-yellow-300 border-2 border-yellow-500 text-yellow-950 px-3 py-1.5 rounded-full font-display font-extrabold text-xs sm:text-sm shadow-inner">
-              <Sparkles className="w-4 h-4 text-amber-700 fill-amber-500 animate-pulse" />
+            <div className="flex items-center gap-1.5 bg-yellow-400 border-4 border-amber-950 text-amber-950 px-3 py-1.5 rounded-2xl font-display font-black text-xs sm:text-sm shadow-cartoon-sm">
+              <Sparkles className="w-4 h-4 text-amber-950 fill-amber-500" strokeWidth={2.5} />
               <span>{currentProfile.starGems} Star Gems</span>
             </div>
 
@@ -117,7 +102,7 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
                 soundService.playBoopSound();
                 onClose();
               }}
-              className="p-2 bg-amber-200 hover:bg-amber-300 active:scale-95 text-amber-950 rounded-full transition-all"
+              className="p-2 bg-amber-50 hover:bg-amber-200 active:translate-x-0.5 active:translate-y-0.5 border-4 border-amber-950 text-amber-950 rounded-2xl shadow-cartoon-sm transition-all"
             >
               <X className="w-6 h-6" />
             </button>
@@ -125,66 +110,24 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 sm:gap-3 mb-4 bg-amber-200/60 p-1.5 rounded-2xl border border-amber-300 overflow-x-auto">
-          <button
-            onClick={() => {
-              soundService.playPopSound();
-              setActiveTab('room');
-            }}
-            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'room'
-                ? 'bg-amber-600 text-white shadow-md scale-102'
-                : 'text-amber-900 hover:bg-amber-300/60'
-            }`}
-          >
-            <Home className="w-4 h-4" />
-            <span>Treehouse 2.5D Room</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundService.playPopSound();
-              setActiveTab('wardrobe');
-            }}
-            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'wardrobe'
-                ? 'bg-amber-600 text-white shadow-md scale-102'
-                : 'text-amber-900 hover:bg-amber-300/60'
-            }`}
-          >
-            <Shirt className="w-4 h-4" />
-            <span>Clothes Closet</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundService.playPopSound();
-              setActiveTab('decor');
-            }}
-            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'decor'
-                ? 'bg-amber-600 text-white shadow-md scale-102'
-                : 'text-amber-900 hover:bg-amber-300/60'
-            }`}
-          >
-            <Palette className="w-4 h-4" />
-            <span>Furniture Shop</span>
-          </button>
-
-          <button
-            onClick={() => {
-              soundService.playPopSound();
-              setActiveTab('minigames');
-            }}
-            className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl font-display font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all ${
-              activeTab === 'minigames'
-                ? 'bg-amber-600 text-white shadow-md scale-102'
-                : 'text-amber-900 hover:bg-amber-300/60'
-            }`}
-          >
-            <Gamepad2 className="w-4 h-4" />
-            <span>Arcade Games</span>
-          </button>
+        <div className="flex items-center gap-1.5 sm:gap-2.5 mb-4 bg-amber-200 p-1.5 rounded-2xl border-4 border-amber-950 shadow-cartoon-sm overflow-x-auto">
+          {TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => {
+                soundService.playPopSound();
+                setActiveTab(id);
+              }}
+              className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl border-3 border-amber-950 font-display font-black text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-transform ${
+                activeTab === id
+                  ? 'bg-yellow-400 text-amber-950 shadow-cartoon-sm scale-102'
+                  : 'bg-amber-50 text-amber-950 hover:bg-amber-100'
+              }`}
+            >
+              <Icon className="w-4 h-4" strokeWidth={2.5} />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
 
         {/* TAB 1: VISUAL 2.5D INTERIOR TREEHOUSE ROOM CANVAS */}
@@ -198,15 +141,26 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
               equippedOutfitItem={equippedOutfitItem}
               equippedAccessoryItem={equippedAccessoryItem}
               onItemClick={handleRoomItemClick}
+              onMoveItem={onMoveItem}
+              onResetRoomLayout={onResetRoomLayout}
             />
 
-            {/* Interactive Speech Banner */}
-            <div className="bg-amber-100 border-2 border-amber-300 rounded-2xl p-3 flex items-center gap-3 shadow-sm">
-              <Volume2 className="w-5 h-5 text-amber-700 shrink-0 animate-pulse" />
+            {/* Hand-drawn cartoon speech bubble. Tapping it replays the line,
+                so a child who missed the voiceover can hear it again. */}
+            <button
+              type="button"
+              onClick={() => {
+                soundService.playPopSound();
+                soundService.speak(activeSpeechText);
+              }}
+              title="Tap to hear this again"
+              className="speech-bubble w-full text-left bg-amber-50 border-4 border-amber-950 rounded-3xl px-4 py-3 mt-6 flex items-center gap-3 shadow-cartoon"
+            >
+              <Volume2 className="w-5 h-5 text-amber-950 shrink-0" strokeWidth={2.5} />
               <p className="text-xs sm:text-sm font-display font-bold text-amber-950">
                 {activeSpeechText}
               </p>
-            </div>
+            </button>
 
             {/* Quick Placed Items Management Strip */}
             <div className="bg-white border-2 border-amber-200 rounded-2xl p-3 shadow-sm space-y-2">
@@ -345,7 +299,7 @@ export const TreehouseStore: React.FC<TreehouseStoreProps> = ({
                             <h4 className="font-display font-bold text-sm text-slate-900">
                               {item.name}
                             </h4>
-                            <span className="text-[10px] uppercase font-mono font-bold px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded">
+                            <span className="text-[10px] uppercase font-mono font-bold px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded">
                               {item.category}
                             </span>
                           </div>
