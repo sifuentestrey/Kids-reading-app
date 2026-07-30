@@ -9,7 +9,11 @@
 # `npm run build:static` and the output directory to `dist`.
 
 [build]
-  command = "npm run build:static"
+  # The install step is explicit because the repository carries bun.lock while
+  # .gitignore excludes package-lock.json, so leaving it to the host means
+  # letting it guess which package manager this is. `npm install` resolves
+  # without a lockfile; `npm ci` would abort for want of one.
+  command = "npm install && npm run build:static"
   publish = "dist"
 
 # One page, no router, but a stray deep link should still land on the app rather
