@@ -57,7 +57,10 @@ function pcmToWav(
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // Hosts that run this for us (Render, Fly, Heroku) assign a port and expect the
+  // service to listen on it, so an environment variable has to win over the local
+  // default or the deployment never becomes reachable.
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 

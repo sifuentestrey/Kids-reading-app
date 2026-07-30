@@ -57,13 +57,13 @@ export const DEFAULT_ITEM_SLOTS: Record<string, RoomPoint> = {
   treehouse_hammock: { x: 0.72, y: 0.28 },
 
   // Wall-mounted, standing just above the floor line
-  bookshelf_nook: { x: 0.12, y: 0.46 },
+  bookshelf_nook: { x: 0.08, y: 0.46 },
   star_telescope: { x: 0.87, y: 0.48 },
   glowing_aquarium: { x: 0.28, y: 0.44 },
   neon_star: { x: 0.72, y: 0.42 },
 
   // Floor — back half
-  treehouse_bed: { x: 0.18, y: 0.62 },
+  treehouse_bed: { x: 0.24, y: 0.62 },
   secret_tent: { x: 0.82, y: 0.64 },
   play_tent: { x: 0.82, y: 0.64 },
   retro_jukebox: { x: 0.62, y: 0.6 },
@@ -74,11 +74,13 @@ export const DEFAULT_ITEM_SLOTS: Record<string, RoomPoint> = {
   retro_tv: { x: 0.75, y: 0.68 },
   lava_lamp: { x: 0.9, y: 0.66 },
 
-  // Floor — front
-  phonics_desk: { x: 0.18, y: 0.84 },
+  // Floor — front. The desk sits on the right rather than under the bed: both
+  // pieces are tall — a canopy frame and a hutch — so stacking them at the same
+  // x buried the desk behind the bed at the default arrangement.
+  phonics_desk: { x: 0.8, y: 0.82 },
   stuffed_bear: { x: 0.38, y: 0.82 },
   wooden_train: { x: 0.66, y: 0.86 },
-  potted_plant: { x: 0.9, y: 0.8 },
+  potted_plant: { x: 0.95, y: 0.72 },
   magic_wand_toy: { x: 0.44, y: 0.88 },
 };
 

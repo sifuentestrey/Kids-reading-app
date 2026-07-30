@@ -1,5 +1,14 @@
 import React from 'react';
-import { ArtDefs, ContactShadow, IsoBox, IsoCylinder, MAT, RimLight, iso } from './artKit';
+import {
+  ArtDefs,
+  ContactShadow,
+  IsoBox,
+  IsoCylinder,
+  MAT,
+  RimLight,
+  iso,
+  leftFaceTransform,
+} from './artKit';
 
 /**
  * Isometric furniture for the treehouse room.
@@ -36,93 +45,189 @@ const Sprite: React.FC<{
  * BEDS & SEATING
  * ================================================================== */
 
+/**
+ * Canopy bed.
+ *
+ * The first version read as one pink mass, and two rounds of fixing it showed
+ * the cause was the roof itself, not its colour. In a top-down isometric view
+ * anything overhead covers what is under it, so a solid canopy hides the
+ * bedding — and the bedding is the entire reason the object reads as a bed. A
+ * cream roof over teal bedding just traded a pink slab for a cream one, sitting
+ * over the same hidden bed.
+ *
+ * So the roof is gone. What remains is an open canopy frame — four posts, four
+ * rails, drapes gathered at the corners — which delivers what the canopy was
+ * for (height, silhouette, a sense of enclosure) while leaving the mattress,
+ * quilt and pillows in full view. The drapes are plum, a hue used nowhere else
+ * on the piece, because coral drapes merged into the coral pillow exactly the
+ * way the coral canopy first merged into it.
+ *
+ * The two front drapes and the two front posts draw last, so they cross in
+ * front of the quilt. That overlap is what gives the bed its depth.
+ */
 export const TreehouseBedGraphic: React.FC<GraphicProps> = ({ className = 'w-36 h-36' }) => {
   const p = 'bed';
+
+  // Bed footprint. The head is at the back (low v), the foot at the front.
+  const U0 = -32;
+  const U1 = 32;
+  const V0 = -20;
+  const V1 = 20;
+  /**
+   * Height of the canopy rails, and so of the posts under them. Raised from 54
+   * so the front pelmet clears the pillows: at the lower rail height the pelmet's
+   * scalloped hem landed on exactly the screen rows the pillows occupy, which is
+   * the same thing the solid roof did, just less of it.
+   */
+  const RAIL = 60;
+
+  const post = (u: number, v: number) => (
+    <g key={`p${u}-${v}`}>
+      <IsoCylinder u={u} v={v} r={3.8} th={RAIL + 4} material={MAT.oak} idPrefix={p} />
+      <IsoCylinder u={u} v={v} h={RAIL + 4} r={5} th={5} material={MAT.oak} idPrefix={p} taper={0.45} />
+    </g>
+  );
+
+  /**
+   * A drape gathered at a post: cloth hanging from the rail, narrow where it is
+   * tied and flaring to a scalloped hem. Drawn in screen space from the post
+   * top, since hanging cloth has no isometric faces to respect.
+   *
+   * A hanging drape is a vertical plane, so it takes the mid and dark tones of
+   * its material and never the lit `top` one. Lighting it as a top face — the
+   * first attempt — turned all four corners into glowing purple banners that
+   * outweighed the bed they were meant to frame.
+   */
+  const drape = (u: number, v: number, flip: number) => {
+    const t = iso(u, v, RAIL);
+    const wTop = 5.5;
+    const wBot = 7;
+    const len = 24;
+    const x = (dx: number) => t.x + dx * flip;
+    return (
+      <g key={`d${u}-${v}`}>
+        <path
+          d={`M ${x(-wTop)} ${t.y}
+              L ${x(wTop)} ${t.y + 1}
+              C ${x(wBot)} ${t.y + len * 0.6} ${x(wBot)} ${t.y + len * 0.8} ${x(wBot)} ${t.y + len}
+              Q ${x(wBot * 0.4)} ${t.y + len + 4} ${x(0)} ${t.y + len}
+              Q ${x(-wBot * 0.6)} ${t.y + len + 3.5} ${x(-wBot)} ${t.y + len - 1}
+              C ${x(-wBot)} ${t.y + len * 0.7} ${x(-wTop)} ${t.y + len * 0.5} ${x(-wTop)} ${t.y}
+              Z`}
+          fill={MAT.plum.right}
+        />
+        {/* Lit fold down the light-facing edge — the mid tone, not the top one */}
+        <path
+          d={`M ${x(-wTop)} ${t.y}
+              C ${x(-wBot * 0.5)} ${t.y + len * 0.5} ${x(-wBot * 0.35)} ${t.y + len * 0.7} ${x(-wBot * 0.35)} ${t.y + len}
+              Q ${x(-wBot * 0.7)} ${t.y + len + 2} ${x(-wBot)} ${t.y + len - 1}
+              C ${x(-wBot)} ${t.y + len * 0.7} ${x(-wTop)} ${t.y + len * 0.5} ${x(-wTop)} ${t.y}
+              Z`}
+          fill={MAT.plum.left}
+        />
+        {/* The store copy calls these star curtains, so they carry a star. It is
+            small enough to fade to nothing at room scale rather than turn into
+            noise, and to read as pattern when the piece is seen large. */}
+        <path
+          d={`M ${x(1)} ${t.y + 11} l 1.6 3.4 3.6 0.5 -2.6 2.5 0.6 3.6 -3.2 -1.8 -3.2 1.8 0.6 -3.6 -2.6 -2.5 3.6 -0.5 Z`}
+          fill={MAT.butter.top}
+          opacity="0.5"
+        />
+      </g>
+    );
+  };
+
   return (
-    <Sprite className={className} viewBox="-90 -120 180 170">
+    <Sprite className={className} viewBox="-64 -104 128 138">
       <ArtDefs idPrefix={p} />
-      <ContactShadow u={0} v={22} rx={62} idPrefix={p} />
+      <ContactShadow u={0} v={V1 + 3} rx={60} idPrefix={p} />
 
-      {/* Bed frame: a low box with a mattress slab on top */}
-      <IsoBox u={-30} v={-18} w={60} d={36} th={8} material={MAT.walnut} idPrefix={p} />
-      <IsoBox u={-29} v={-17} h={8} w={58} d={34} th={9} material={MAT.cream} idPrefix={p} bevel={1.5} />
+      {/* Frame, headboard, then a mattress inset on top */}
+      <IsoBox u={U0} v={V0} w={U1 - U0} d={V1 - V0} th={9} material={MAT.walnut} idPrefix={p} />
+      <IsoBox u={U0} v={V0} h={9} w={U1 - U0} d={5} th={26} material={MAT.walnut} idPrefix={p} />
+      <IsoBox u={U0 + 4} v={V0} h={13} w={56} d={2} th={18} material={MAT.oak} idPrefix={p} />
+      <IsoBox u={U0 + 1.5} v={V0 + 5} h={9} w={61} d={33.5} th={10} material={MAT.cream} idPrefix={p} bevel={1.5} />
 
-      {/* Quilt covering the lower two thirds, tucked in at the sides */}
-      <IsoBox u={-29} v={-3} h={17} w={58} d={20} th={3.5} material={MAT.teal} idPrefix={p} bevel={1} />
-      {/* Quilt stitching, following the top face's angle */}
-      {[-20, -8, 4, 16].map((u) => (
+      {/* Back rail and the two side rails of the canopy frame */}
+      <IsoBox u={U0} v={V0} h={RAIL} w={U1 - U0} d={3} th={3.5} material={MAT.oak} idPrefix={p} />
+      <IsoBox u={U0} v={V0} h={RAIL} w={3} d={V1 - V0} th={3.5} material={MAT.oak} idPrefix={p} />
+      <IsoBox u={U1 - 3} v={V0} h={RAIL} w={3} d={V1 - V0} th={3.5} material={MAT.oak} idPrefix={p} />
+
+      {/* Back posts and back drapes, behind the bedding */}
+      {[post(U0, V0), post(U1, V0)]}
+      {[drape(U0, V0, 1), drape(U1, V0, -1)]}
+
+      {/* Pillows in coral and butter. They were cream at first, which put cream
+          pillows on a cream mattress — the same merge the roof used to cause,
+          one layer down. */}
+      <IsoBox u={-27} v={-13} h={19} w={25} d={11} th={7} material={MAT.coral} idPrefix={p} bevel={2.5} />
+      <IsoBox u={2} v={-13} h={19} w={25} d={11} th={7} material={MAT.butter} idPrefix={p} bevel={2.5} />
+
+      {/* Quilt over the foot half, with a turned-down sheet at its head edge.
+          The sheet is what stops quilt and mattress reading as one slab, and the
+          cross stitching is what stops the quilt reading as a painted panel. */}
+      <IsoBox u={U0 + 1.5} v={2} h={19} w={61} d={16.5} th={5} material={MAT.teal} idPrefix={p} bevel={1} />
+      {[-24, -12, 0, 12, 24].map((u) => (
         <line
-          key={u}
-          x1={iso(u, -2, 20.5).x}
-          y1={iso(u, -2, 20.5).y}
-          x2={iso(u, 16, 20.5).x}
-          y2={iso(u, 16, 20.5).y}
-          stroke="#468083"
-          strokeWidth="1.2"
-          opacity="0.55"
+          key={`s${u}`}
+          x1={iso(u, 3, 24).x}
+          y1={iso(u, 3, 24).y}
+          x2={iso(u, 17.5, 24).x}
+          y2={iso(u, 17.5, 24).y}
+          stroke={MAT.teal.right}
+          strokeWidth="1.4"
+          opacity="0.75"
         />
       ))}
-
-      {/* Pillows */}
-      <IsoBox u={-25} v={-14} h={17} w={22} d={12} th={5} material={MAT.cream} idPrefix={p} bevel={2.5} />
-      <IsoBox u={0} v={-14} h={17} w={22} d={12} th={5} material={MAT.coral} idPrefix={p} bevel={2.5} />
-
-      {/* Four corner posts */}
-      {[
-        [-30, -18],
-        [30, -18],
-        [-30, 18],
-        [30, 18],
-      ].map(([u, v]) => (
-        <IsoCylinder key={`${u}-${v}`} u={u} v={v} r={3.4} th={46} material={MAT.oak} idPrefix={p} />
+      {[7, 12.5].map((v) => (
+        <line
+          key={`c${v}`}
+          x1={iso(U0 + 2.5, v, 24).x}
+          y1={iso(U0 + 2.5, v, 24).y}
+          x2={iso(U1 - 1, v, 24).x}
+          y2={iso(U1 - 1, v, 24).y}
+          stroke={MAT.teal.right}
+          strokeWidth="1.4"
+          opacity="0.75"
+        />
       ))}
+      <IsoBox u={U0 + 1.5} v={-3.5} h={19} w={61} d={6} th={3} material={MAT.cream} idPrefix={p} bevel={0.8} />
 
-      {/*
-        Pitched canopy roof. A flat slab on posts reads as a table, so the canopy
-        is built as two sloped panels meeting at a ridge: the left panel catches
-        the light, the right falls away, and the gable end closes the shape.
-      */}
+      {/* Front rail, with a shallow scalloped pelmet. It hangs at rail height,
+          well clear of the bedding — the earlier valance dropped from a roof
+          edge and cut straight across the mattress. */}
+      <IsoBox u={U0} v={V1 - 3} h={RAIL} w={U1 - U0} d={3} th={3.5} material={MAT.oak} idPrefix={p} />
       {(() => {
-        const ridgeH = 68;
-        const eaveH = 46;
-        const ridgeBack = iso(0, -21, ridgeH);
-        const ridgeFront = iso(0, 21, ridgeH);
-        const eaveLB = iso(-33, -21, eaveH);
-        const eaveLF = iso(-33, 21, eaveH);
-        const eaveRB = iso(33, -21, eaveH);
-        const eaveRF = iso(33, 21, eaveH);
-
+        const a = iso(U0, V1 - 1.5, RAIL);
+        const b = iso(U1, V1 - 1.5, RAIL);
+        const scallops = 7;
+        const drop = 4.5;
+        const at = (k: number) => ({
+          x: a.x + (b.x - a.x) * k,
+          y: a.y + (b.y - a.y) * k + drop,
+        });
+        let d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+        for (let i = scallops; i >= 0; i -= 1) {
+          const q = at(i / scallops);
+          if (i === scallops) {
+            d += ` L ${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
+          } else {
+            const prev = at((i + 1) / scallops);
+            d += ` Q ${((prev.x + q.x) / 2).toFixed(2)} ${((prev.y + q.y) / 2 + 4).toFixed(2)} ${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
+          }
+        }
         return (
           <g>
-            {/* Right slope — away from the light */}
-            <polygon
-              points={`${ridgeBack.x},${ridgeBack.y} ${ridgeFront.x},${ridgeFront.y} ${eaveRF.x},${eaveRF.y} ${eaveRB.x},${eaveRB.y}`}
-              fill={MAT.coral.right}
-            />
-            {/* Left slope — lit */}
-            <polygon
-              points={`${ridgeBack.x},${ridgeBack.y} ${ridgeFront.x},${ridgeFront.y} ${eaveLF.x},${eaveLF.y} ${eaveLB.x},${eaveLB.y}`}
-              fill={MAT.coral.left}
-            />
-            {/* Front gable */}
-            <polygon
-              points={`${ridgeFront.x},${ridgeFront.y} ${eaveLF.x},${eaveLF.y} ${eaveRF.x},${eaveRF.y}`}
-              fill={MAT.coral.top}
-            />
-            {/* Scalloped valance hanging off the front eaves */}
-            <path
-              d={`M ${eaveLF.x} ${eaveLF.y}
-                  q 8 9 16 0 q 8 9 16 0 q 8 9 16 0 q 8 9 16 0
-                  L ${eaveRF.x} ${eaveRF.y} Z`}
-              fill={MAT.cream.left}
-            />
-            <RimLight
-              d={`M ${eaveLB.x} ${eaveLB.y} L ${ridgeBack.x} ${ridgeBack.y}`}
-              opacity={0.4}
-            />
+            <path d={`${d} Z`} fill={MAT.plum.left} />
+            <path d={`${d} Z`} fill={`url(#${p}-fade)`} opacity="0.45" />
+            <RimLight d={`M ${a.x} ${a.y} L ${b.x} ${b.y}`} width={1.6} opacity={0.35} />
           </g>
         );
       })()}
+
+      {/* Front posts and front drapes last, so they cross in front of the quilt */}
+      {[post(U0, V1), post(U1, V1)]}
+      {[drape(U0, V1, 1), drape(U1, V1, -1)]}
     </Sprite>
   );
 };
@@ -254,36 +359,127 @@ export const BookshelfGraphic: React.FC<GraphicProps> = ({ className = 'w-30 h-3
   );
 };
 
+/**
+ * Phonics desk.
+ *
+ * The first version was four pencil-thin legs and a bare top, every part in a
+ * warm wood tone, so at room scale it had no silhouette and no value contrast —
+ * it read as a smudge. What it needed was mass and a subject:
+ *
+ * - Trestle side panels instead of stick legs, which gives large dark shapes for
+ *   the lit desktop to sit against.
+ * - A hutch above the desktop carrying three alphabet cards. That is both the
+ *   vertical mass the silhouette was missing and the thing that says *phonics*
+ *   rather than *table*.
+ * - A stool in front, drawn last so it overlaps the desk. A desk with a seat
+ *   pulled up to it reads as a place to work.
+ *
+ * The alphabet cards use `leftFaceTransform`, so the letters lie on the hutch's
+ * plane. Upright text here would have read as a sticker and flattened the box.
+ */
 export const PhonicsDeskGraphic: React.FC<GraphicProps> = ({ className = 'w-34 h-34' }) => {
   const p = 'desk';
+  const cards = [
+    { x: 3, mat: MAT.coral, letter: 'A' },
+    { x: 23, mat: MAT.teal, letter: 'B' },
+    { x: 43, mat: MAT.butter, letter: 'C' },
+  ];
+
   return (
-    <Sprite className={className} viewBox="-90 -100 180 150">
+    <Sprite className={className} viewBox="-66 -106 132 144">
       <ArtDefs idPrefix={p} />
-      <ContactShadow u={0} v={18} rx={50} idPrefix={p} />
+      <ContactShadow u={0} v={24} rx={56} idPrefix={p} />
 
-      {/* Legs, then the top, so the top overlaps them correctly */}
-      {[[-26, -12], [22, -12], [-26, 12], [22, 12]].map(([u, v]) => (
-        <IsoBox key={`${u}-${v}`} u={u} v={v} w={4} d={4} th={30} material={MAT.walnut} idPrefix={p} />
+      {/* Trestle sides and the stretcher between them */}
+      <IsoBox u={-34} v={-18} w={6} d={36} th={34} material={MAT.walnut} idPrefix={p} />
+      <IsoBox u={28} v={-18} w={6} d={36} th={34} material={MAT.walnut} idPrefix={p} />
+      <IsoBox u={-28} v={-4} h={9} w={56} d={7} th={5} material={MAT.walnut} idPrefix={p} />
+
+      {/* Desktop */}
+      <IsoBox u={-38} v={-22} h={34} w={76} d={44} th={5} material={MAT.pine} idPrefix={p} bevel={1} />
+
+      {/* Drawer front under the near edge — a colour band that also reads as the
+          desk having a front, not just an underside. */}
+      <IsoBox u={-28} v={13} h={24} w={56} d={5} th={9} material={MAT.teal} idPrefix={p} />
+      {[-13, 13].map((u) => (
+        <circle
+          key={u}
+          cx={iso(u, 18, 29).x}
+          cy={iso(u, 18, 29).y}
+          r="2.6"
+          fill={MAT.butter.top}
+        />
       ))}
-      <IsoBox u={-30} v={-16} h={30} w={60} d={36} th={5} material={MAT.pine} idPrefix={p} bevel={1} />
 
-      {/* An open book on the desk, angled with the surface */}
-      <IsoBox u={-16} v={-8} h={35} w={30} d={18} th={2} material={MAT.cream} idPrefix={p} bevel={0.5} />
-      <line
-        x1={iso(-1, -8, 37).x}
-        y1={iso(-1, -8, 37).y}
-        x2={iso(-1, 10, 37).x}
-        y2={iso(-1, 10, 37).y}
-        stroke={MAT.cream.right}
-        strokeWidth="1.5"
-      />
+      {/* Hutch: frame, recessed panel, then the alphabet cards on its face */}
+      <IsoBox u={-35} v={-22} h={39} w={70} d={5} th={32} material={MAT.walnut} idPrefix={p} />
+      <g transform={leftFaceTransform(-31, -17, 68)}>
+        <rect x="0" y="0" width="62" height="26" rx="2" fill={MAT.oak.right} />
+        {cards.map(({ x, mat, letter }) => (
+          <g key={letter}>
+            <rect x={x} y={3.5} width="16" height="19" rx="2.5" fill={mat.left} />
+            <rect x={x} y={3.5} width="16" height="6" rx="2.5" fill={mat.top} opacity="0.8" />
+            <text
+              x={x + 8}
+              y={18}
+              textAnchor="middle"
+              fontSize="13"
+              fontWeight="700"
+              fill="#FFF6E4"
+            >
+              {letter}
+            </text>
+          </g>
+        ))}
+      </g>
 
-      {/* Globe: sphere with a light-side highlight and a brass ring */}
-      <circle cx={iso(20, -2, 46).x} cy={iso(20, -2, 46).y} r="12" fill={MAT.sky.left} />
-      <circle cx={iso(20, -2, 46).x - 3} cy={iso(20, -2, 46).y - 4} r="8.5" fill={MAT.sky.top} opacity="0.75" />
-      <path d="M -2 -8 Q 6 -14 12 -6" fill={MAT.leaf.left} opacity="0.8" transform={`translate(${iso(20, -2, 46).x - 5} ${iso(20, -2, 46).y})`} />
-      <ellipse cx={iso(20, -2, 46).x} cy={iso(20, -2, 46).y} rx="13.5" ry="4" fill="none" stroke={MAT.butter.left} strokeWidth="2" />
-      <IsoCylinder u={20} v={-2} h={35} r={4} th={4} material={MAT.butter} idPrefix={p} />
+      {/* Open book: a coral cover with cream pages and a valley at the spine */}
+      <IsoBox u={-22} v={-10} h={39} w={32} d={20} th={2} material={MAT.coral} idPrefix={p} bevel={0.5} />
+      <IsoBox u={-21} v={-9} h={41} w={14} d={18} th={1.6} material={MAT.cream} idPrefix={p} bevel={0.4} />
+      <IsoBox u={-5} v={-9} h={41} w={14} d={18} th={1.6} material={MAT.cream} idPrefix={p} bevel={0.4} />
+      {[-17, -13, 1, 5].map((u) => (
+        <line
+          key={u}
+          x1={iso(u, -7, 42.6).x}
+          y1={iso(u, -7, 42.6).y}
+          x2={iso(u, 7, 42.6).x}
+          y2={iso(u, 7, 42.6).y}
+          stroke={MAT.cream.right}
+          strokeWidth="1"
+          opacity="0.8"
+        />
+      ))}
+
+      {/* Globe, out at the light side of the desktop and forward of the hutch —
+          sat further back it covered the middle alphabet card. */}
+      <IsoCylinder u={26} v={8} h={39} r={5} th={5} material={MAT.butter} idPrefix={p} />
+      {(() => {
+        const c = iso(26, 8, 53);
+        return (
+          <g>
+            <circle cx={c.x} cy={c.y} r="10" fill={MAT.sky.left} />
+            <circle cx={c.x - 2.6} cy={c.y - 3} r="7" fill={MAT.sky.top} opacity="0.8" />
+            <ellipse cx={c.x - 3} cy={c.y - 1} rx="4" ry="2.6" fill={MAT.leaf.left} opacity="0.9" />
+            <ellipse cx={c.x + 4} cy={c.y + 3.5} rx="2.6" ry="1.8" fill={MAT.leaf.left} opacity="0.9" />
+            <path
+              d={`M ${c.x - 12} ${c.y - 2} A 12 12 0 0 0 ${c.x + 12} ${c.y - 2}`}
+              fill="none"
+              stroke={MAT.butter.left}
+              strokeWidth="2"
+            />
+            <RimLight d={`M ${c.x - 9} ${c.y - 4} Q ${c.x - 3} ${c.y - 10} ${c.x + 3} ${c.y - 9}`} opacity={0.35} />
+          </g>
+        );
+      })()}
+
+      {/* Stool, drawn last so it sits in front of the desk. Its cushion is coral
+          rather than another wood tone, so the seat reads as a separate object. */}
+      <ContactShadow u={0} v={34} rx={21} idPrefix={p} opacity={0.85} />
+      {[[-10, 28], [10, 28], [0, 41]].map(([u, v]) => (
+        <IsoBox key={`${u}-${v}`} u={u} v={v} w={4} d={4} th={19} material={MAT.walnut} idPrefix={p} />
+      ))}
+      <IsoCylinder u={0} v={34} h={19} r={16} th={4} material={MAT.oak} idPrefix={p} />
+      <IsoCylinder u={0} v={34} h={23} r={15} th={5} material={MAT.coral} idPrefix={p} taper={0.94} />
     </Sprite>
   );
 };
@@ -367,50 +563,99 @@ export const TeddyBearGraphic: React.FC<GraphicProps> = ({ className = 'w-28 h-3
   );
 };
 
+/**
+ * Alphabet train.
+ *
+ * The first version filled about half of its own viewBox, so it arrived on the
+ * floor at roughly half the size it was budgeted for, and at that size the
+ * 9px letters and 4px wheels were mush. This one is drawn to the edges of the
+ * frame, and the parts that carry the read are the ones that grew most: the
+ * wheels have hubs and rims, and each letter is sheared onto its block's front
+ * face by `leftFaceTransform` rather than floated over the top of it.
+ *
+ * Wheels are near-side only, two per unit. A first pass drew a far-side set too
+ * and put nine axles under the train; the doubled discs ran together into a
+ * chain of dark circles that outweighed the lettered blocks the toy is about.
+ */
 export const WoodenTrainGraphic: React.FC<GraphicProps> = ({ className = 'w-36 h-22' }) => {
   const p = 'train';
+
+  const V0 = -11;
+  const V1 = 11;
+  const BED = 6;
+
   const cars = [
-    { u: -34, mat: MAT.coral, letter: 'A' },
-    { u: -10, mat: MAT.teal, letter: 'B' },
-    { u: 14, mat: MAT.butter, letter: 'C' },
+    { u: -18, mat: MAT.coral, letter: 'A', ink: '#FFF6E4' },
+    { u: 6, mat: MAT.teal, letter: 'B', ink: '#FFF6E4' },
+    // Cream on butter is too close in value to read; this letter takes the ink.
+    { u: 30, mat: MAT.butter, letter: 'C', ink: MAT.walnut.right },
   ];
 
+  /** Toy wheel: tyre, rim and a turned hub. */
+  const wheel = (u: number) => {
+    const c = iso(u, V1 - 3, 6);
+    return (
+      <g key={u}>
+        <circle cx={c.x} cy={c.y} r="6" fill={MAT.charcoal.left} />
+        <circle cx={c.x} cy={c.y} r="3.8" fill="none" stroke={MAT.slate.left} strokeWidth="1.3" opacity="0.65" />
+        <circle cx={c.x} cy={c.y} r="1.7" fill={MAT.slate.top} opacity="0.85" />
+      </g>
+    );
+  };
+
+  const funnel = iso(-52, 0, 43);
+
   return (
-    <Sprite className={className} viewBox="-90 -70 180 100">
+    <Sprite className={className} viewBox="-92 -86 184 118">
       <ArtDefs idPrefix={p} />
-      <ContactShadow u={0} v={10} rx={52} idPrefix={p} />
+      {[-42, -18, 6, 30].map((u) => (
+        <ContactShadow key={u} u={u + 8} v={V1} rx={20} idPrefix={p} />
+      ))}
 
-      {/* Engine */}
-      <IsoBox u={-56} v={-8} h={4} w={22} d={16} th={12} material={MAT.walnut} idPrefix={p} bevel={0.5} />
-      <IsoCylinder u={-50} v={0} h={16} r={4} th={10} material={MAT.charcoal} idPrefix={p} />
-      <IsoBox u={-40} v={-7} h={4} w={8} d={14} th={20} material={MAT.oak} idPrefix={p} bevel={0.5} />
+      {/* Engine: chassis, boiler, funnel with smoke, then the cab behind it */}
+      <IsoBox u={-62} v={V0} h={6} w={42} d={V1 - V0} th={7} material={MAT.walnut} idPrefix={p} bevel={0.5} />
+      <IsoBox u={-60} v={V0 + 2} h={13} w={26} d={18} th={17} material={MAT.coral} idPrefix={p} bevel={1.5} />
+      <IsoCylinder u={-52} v={0} h={30} r={5.5} th={13} material={MAT.charcoal} idPrefix={p} taper={1.3} />
+      {/* Smoke, tracked off the funnel mouth so the puffs leave the chimney
+          rather than hanging in the air beside it. */}
+      {[
+        [3, -9, 4, 0.42],
+        [8, -19, 5.5, 0.28],
+        [16, -30, 7, 0.15],
+      ].map(([dx, dy, r, o]) => (
+        <circle key={dy} cx={funnel.x + dx} cy={funnel.y + dy} r={r} fill="#FFF6E4" opacity={o} />
+      ))}
+      {/* Lamp on the smokebox front */}
+      <circle cx={iso(-59, V1 - 1, 26).x} cy={iso(-59, V1 - 1, 26).y} r="3.6" fill={MAT.butter.top} />
+      <circle cx={iso(-59, V1 - 1, 26).x} cy={iso(-59, V1 - 1, 26).y} r="6.5" fill={MAT.butter.top} opacity="0.22" />
 
-      {/* Alphabet blocks on flatbed cars */}
-      {cars.map(({ u, mat, letter }) => (
+      <IsoBox u={-36} v={V0 + 1} h={13} w={15} d={20} th={27} material={MAT.oak} idPrefix={p} bevel={1} />
+      <g transform={leftFaceTransform(-34, V1 - 1, 37)}>
+        <rect x="0" y="0" width="11" height="11" rx="2" fill={MAT.charcoal.left} />
+        <rect x="0" y="0" width="11" height="4" rx="2" fill="#8FB8E8" opacity="0.35" />
+      </g>
+
+      {/* Flatbed cars with a lettered alphabet block on each */}
+      {cars.map(({ u, mat, letter, ink }) => (
         <g key={letter}>
-          <IsoBox u={u} v={-8} h={4} w={20} d={16} th={4} material={MAT.oak} idPrefix={p} />
-          <IsoBox u={u + 3} v={-5} h={8} w={14} d={10} th={13} material={mat} idPrefix={p} bevel={0.5} />
-          <text
-            x={iso(u + 10, -5, 14).x}
-            y={iso(u + 10, -5, 14).y + 4}
-            textAnchor="middle"
-            fontSize="9"
-            fontWeight="700"
-            fill="#FFF6E4"
-            opacity="0.95"
-          >
-            {letter}
-          </text>
+          {/* Coupling back to whatever is behind */}
+          <IsoBox u={u - 4} v={-2} h={8} w={5} d={4} th={2.5} material={MAT.charcoal} idPrefix={p} />
+          <IsoBox u={u} v={V0} h={BED} w={22} d={V1 - V0} th={5} material={MAT.oak} idPrefix={p} />
+          <IsoBox u={u + 3} v={V0 + 3} h={11} w={16} d={16} th={18} material={mat} idPrefix={p} bevel={0.6} />
+          <g transform={leftFaceTransform(u + 3, V1 - 3, 29)}>
+            <text x="8" y="13.5" textAnchor="middle" fontSize="15" fontWeight="700" fill={ink}>
+              {letter}
+            </text>
+          </g>
+          <RimLight
+            d={`M ${iso(u + 3, V0 + 3, 29).x} ${iso(u + 3, V0 + 3, 29).y} L ${iso(u + 19, V0 + 3, 29).x} ${iso(u + 19, V0 + 3, 29).y}`}
+            width={1.6}
+            opacity={0.3}
+          />
         </g>
       ))}
 
-      {/* Wheels: dark discs with a light catch, sitting under each car */}
-      {[-52, -44, -30, -22, -6, 2, 18, 26].map((u) => (
-        <g key={u}>
-          <circle cx={iso(u, 4, 4).x} cy={iso(u, 4, 4).y} r="4.5" fill={MAT.charcoal.left} />
-          <circle cx={iso(u, 4, 4).x - 1} cy={iso(u, 4, 4).y - 1} r="1.8" fill={MAT.slate.top} opacity="0.7" />
-        </g>
-      ))}
+      {[-56, -42, -13, -1, 11, 23, 35, 47].map(wheel)}
     </Sprite>
   );
 };

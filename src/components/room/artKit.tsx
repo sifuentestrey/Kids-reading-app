@@ -252,6 +252,28 @@ export const ContactShadow: React.FC<{
   );
 };
 
+/**
+ * Transform that lays flat content — text, a letter card, a label — onto an
+ * object's left-facing plane so it shares the room's projection.
+ *
+ * Lettering is where the projection is easiest to break: a letter centred on a
+ * shape as ordinary upright text reads as a sticker on the face, which
+ * undoes the box it is drawn on. Wrapping it in this transform shears it onto
+ * the plane instead, so the letter recedes with the object.
+ *
+ * The left face (constant v) runs along u and h. A local point (lx, ly), with ly
+ * measured downward, sits at u + lx and h - ly, which projects to
+ * (base.x + lx, base.y + lx * V_SCALE + ly) — hence matrix(1, V_SCALE, 0, 1).
+ *
+ * @param u  Grid u of the local origin.
+ * @param v  The face's constant v — the object's front edge.
+ * @param h  Height of the local origin off the floor.
+ */
+export const leftFaceTransform = (u: number, v: number, h: number) => {
+  const o = iso(u, v, h);
+  return `matrix(1 ${V_SCALE} 0 1 ${o.x.toFixed(2)} ${o.y.toFixed(2)})`;
+};
+
 /** A flat panel lying on the floor — rugs, mats, floor cushions. */
 export const IsoFloorPanel: React.FC<{
   u: number;

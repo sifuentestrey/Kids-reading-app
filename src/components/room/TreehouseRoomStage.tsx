@@ -214,7 +214,7 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
   const renderFurnitureGraphic = (item: TreehouseItem) => {
     switch (item.id) {
       case 'treehouse_bed':
-        return <TreehouseBedGraphic className="w-44 h-44 sm:w-52 sm:h-52" />;
+        return <TreehouseBedGraphic className="w-44 h-48 sm:w-52 sm:h-56" />;
       case 'comfy_couch':
         return <ComfyCouchGraphic className="w-44 h-34 sm:w-52 sm:h-40" />;
       case 'bookshelf_nook':
@@ -226,11 +226,11 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
       case 'wooden_train':
         return (
           <div className={isTrainChugging ? 'animate-bounce-subtle' : ''}>
-            <WoodenTrainGraphic className="w-40 h-24 sm:w-48 sm:h-28" />
+            <WoodenTrainGraphic className="w-44 h-28 sm:w-52 sm:h-34" />
           </div>
         );
       case 'phonics_desk':
-        return <PhonicsDeskGraphic className="w-40 h-40 sm:w-48 sm:h-48" />;
+        return <PhonicsDeskGraphic className="w-40 h-44 sm:w-48 sm:h-52" />;
       case 'secret_tent':
       case 'play_tent':
         return <SecretTentGraphic className="w-40 h-44 sm:w-48 sm:h-52" />;

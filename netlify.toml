@@ -1,0 +1,33 @@
+# Static deployment for the kids' tablets.
+#
+# ReadWithMe runs fine without its Express server: `soundService` falls back to
+# the browser's built-in speech synthesis when `/api/tts` is not there. That
+# costs the studio TTS voice and nothing else, so the client bundle on its own
+# is a complete, playable app — no server to keep awake and no API key.
+#
+# Cloudflare Pages reads this file too. On Vercel, set the build command to
+# `npm run build:static` and the output directory to `dist`.
+
+[build]
+  command = "npm run build:static"
+  publish = "dist"
+
+# One page, no router, but a stray deep link should still land on the app rather
+# than a host 404 page.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Progress lives in localStorage, so a stale index.html would strand a child on
+# an old bundle. Revalidate the entry point; the hashed assets under /assets are
+# immutable and safe to keep.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

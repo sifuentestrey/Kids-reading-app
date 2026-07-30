@@ -27,6 +27,18 @@ class SoundService {
   private voiceId: string = 'Kore';
   private provider: 'gemini' | 'elevenlabs' = 'gemini';
   private serverTtsEnabled: boolean = true;
+  /**
+   * Whether a server TTS endpoint appears to exist at all.
+   *
+   * On a static deployment there is no `/api/tts`, so the request comes back as
+   * the SPA's own HTML (or a 404). Without this flag every spoken line would pay
+   * for a doomed round-trip before the browser voice started — a delay before
+   * every word, in a reading app for pre-readers.
+   *
+   * Only a well-formed non-audio reply trips it, never a network error: a flaky
+   * connection should not cost the studio voice for the rest of the session.
+   */
+  private serverTtsAvailable: boolean = true;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -104,7 +116,7 @@ class SoundService {
       return;
     }
 
-    if (this.serverTtsEnabled) {
+    if (this.serverTtsEnabled && this.serverTtsAvailable) {
       const cacheKey = `${this.provider}:${this.voiceId}:${cleanText}`;
       if (this.audioCache.has(cacheKey)) {
         const cachedUrl = this.audioCache.get(cacheKey)!;
@@ -136,6 +148,11 @@ class SoundService {
           this.playAudioUrl(audioUrl, options?.onEnd);
           return;
         }
+
+        // A reply arrived but it is not audio, so nothing is serving TTS here.
+        // Stop asking for the rest of the session and use the browser voice.
+        this.serverTtsAvailable = false;
+        console.info('No server TTS endpoint; using the browser voice from here on.');
       } catch (e) {
         console.warn('Server TTS fetch failed, falling back to Web Speech API', e);
       }

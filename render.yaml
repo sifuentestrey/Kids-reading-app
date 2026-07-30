@@ -1,0 +1,28 @@
+# Node deployment, for the studio TTS voice.
+#
+# The static deployment in netlify.toml is simpler and is the better default —
+# see the README. Use this one when you want the ElevenLabs or Gemini voice
+# instead of the tablet's built-in one, since that needs the Express server in
+# server.ts and an API key, neither of which a static host can provide.
+#
+# Render reads this file when you create a Blueprint from the repository.
+
+services:
+  - type: web
+    name: readwithme
+    runtime: node
+    plan: free
+    # `build` produces both the client bundle and dist/server.cjs, which has
+    # NODE_ENV baked in, so `start` needs no environment of its own.
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    # Render assigns PORT and waits for the service to listen on it; server.ts
+    # reads it. This endpoint keeps the instance from being marked unhealthy.
+    healthCheckPath: /api/health
+    envVars:
+      # Set whichever provider you use in the Render dashboard. `sync: false`
+      # keeps the value out of this file and out of git.
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
