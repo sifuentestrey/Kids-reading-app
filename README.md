@@ -30,10 +30,11 @@ npx vite preview --port 3000
 Once it is deployed, open the URL on each tablet and use **Add to Home Screen** so
 it launches like an app.
 
-The one thing static hosting costs is the studio TTS voice, which needs the Node
-server plus an API key. Children get their device's built-in voice instead. The
-app detects the missing endpoint on its first request and stops asking, so there
-is no per-line delay.
+Static hosting still gets the natural studio voice: `netlify/functions/tts.ts`
+holds the API key server-side. See **Voices** below for the one env var it needs.
+Without that key the app falls back to the device's own voice, detecting the
+missing endpoint on the first request and not asking again, so there is no
+per-line delay.
 
 ### On your own machine, over Wi-Fi
 
@@ -55,9 +56,10 @@ awake and on the network.
 
 ### Node hosting, for the studio TTS voice
 
-Deploy this way only if you want the ElevenLabs or Gemini voice rather than the
-tablet's built-in one. It needs the Express server and an API key, and on a free
-tier the instance sleeps when idle, so the first load of the day is slow.
+Only needed if you want ElevenLabs specifically, or want to run the Express
+server for another reason — Gemini's voice is available on static hosting via the
+function described under **Voices**. On a free tier the instance sleeps when idle,
+so the first load of the day is slow.
 
 `render.yaml` is a Render Blueprint — create one from the repository and set
 `ELEVENLABS_API_KEY` or `GEMINI_API_KEY` in the dashboard. Render assigns the
@@ -69,9 +71,32 @@ without them the app uses the browser voice and nothing breaks.
 
 ## Voices
 
-Speech uses the studio TTS voice when a Node deployment and an API key are
-present, and the device's own speech synthesis otherwise. The browser voice is
-chosen deliberately in `src/services/browserVoice.ts` rather than left to the
+### Getting the natural voice (Gemini via Google AI Studio)
+
+The device's own speech synthesis is audibly synthetic on every platform, no
+matter which voice is chosen. For a natural storybook narrator the app needs a
+real neural TTS service, and `netlify/functions/tts.ts` provides it without
+giving up static hosting:
+
+1. Create a free API key at https://aistudio.google.com/apikey
+2. In Netlify: Site configuration -> Environment variables -> add
+   `GEMINI_API_KEY` with that value.
+3. Redeploy (Deploys -> Trigger deploy). Functions only pick up new environment
+   variables on a fresh deploy.
+
+Until that key exists the function reports itself unavailable and the app uses
+the device voice, so nothing breaks while it is missing. Voices available:
+`Kore` (default, warmest), `Puck`, `Fenrir`, `Zephyr`, `Charon`.
+
+Note on quota: every tap speaks, and the free tier is finite. Audio is cached in
+memory per session and sent with a 24-hour `Cache-Control`, but a page reload
+starts over. If quota becomes a problem, pre-generating the fixed strings is the
+next step — the API is only needed for text that varies.
+
+### How the browser fallback picks a voice
+
+When no key is configured the app uses the device's own speech synthesis. That
+voice is chosen deliberately in `src/services/browserVoice.ts` rather than left to the
 platform: every platform still ships its 1980s formant synthesisers (macOS
 "Fred", iOS "Eloquence" and the "Compact" variants) and some browsers pick one
 of them by default, which is what makes an app sound broken. The ranking prefers

@@ -16,6 +16,15 @@
   command = "npm install && npm run build:static"
   publish = "dist"
 
+# Studio text-to-speech. This MUST come before the SPA catch-all below: redirects
+# are matched top-down and first match wins, so with the catch-all first every
+# /api/tts request would be answered with index.html and the app would silently
+# fall back to the device voice.
+[[redirects]]
+  from = "/api/tts"
+  to = "/.netlify/functions/tts"
+  status = 200
+
 # One page, no router, but a stray deep link should still land on the app rather
 # than a host 404 page.
 [[redirects]]

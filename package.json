@@ -9,7 +9,7 @@
     "build:static": "vite build",
     "start": "node dist/server.cjs",
     "preview": "vite preview --port 3000",
-    "test": "tsx src/services/browserVoice.test.ts"
+    "test": "tsx src/services/browserVoice.test.ts && tsx netlify/functions/tts.test.mts"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
