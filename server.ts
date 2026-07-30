@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Modality } from "@google/genai";
+import { pcmToWav } from "./shared/audio";
 
 let genAIClient: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
@@ -19,40 +20,6 @@ function getGeminiClient(): GoogleGenAI | null {
     }
   }
   return genAIClient;
-}
-
-function pcmToWav(
-  pcmBuffer: Buffer,
-  sampleRate = 24000,
-  numChannels = 1,
-  bitsPerSample = 16
-): Buffer {
-  const header = Buffer.alloc(44);
-  const dataSize = pcmBuffer.length;
-  const fileSize = dataSize + 36;
-  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-
-  // RIFF descriptor
-  header.write("RIFF", 0);
-  header.writeUInt32LE(fileSize, 4);
-  header.write("WAVE", 8);
-
-  // fmt sub-chunk
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20); // PCM format
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-
-  // data sub-chunk
-  header.write("data", 36);
-  header.writeUInt32LE(dataSize, 40);
-
-  return Buffer.concat([header, pcmBuffer]);
 }
 
 async function startServer() {
