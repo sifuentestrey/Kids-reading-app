@@ -52,24 +52,10 @@ export default async function handler(request: Request): Promise<Response> {
     // Not an error: the site is designed to work without a key, on the device
     // voice. Saying so plainly is what lets the client degrade cleanly.
     //
-    // The diagnostic exists because "the key is set but the function cannot see
-    // it" is the likeliest way this breaks, and it is indistinguishable from no
-    // key at all from the outside. A Netlify variable scoped to Builds only, or
-    // named with a typo or a VITE_ prefix, produces exactly this response.
-    //
-    // Only variable NAMES are reported, never values, and only ones that look
-    // key-related — enough to spot a misnaming or a missing scope without
-    // exposing a secret on a public endpoint.
-    const related = Object.keys(process.env)
-      .filter((k) => /gemini|eleven|google|api[_-]?key/i.test(k))
-      .sort();
-    const raw = process.env.GEMINI_API_KEY;
-    return fallback(
-      'No GEMINI_API_KEY visible to this function; using browser speech synthesis.' +
-        ` [diagnostic — names only, no values: matching env vars = ${
-          related.length ? related.join(', ') : 'none'
-        }; GEMINI_API_KEY present = ${raw !== undefined}; length = ${raw?.length ?? 0}]`
-    );
+    // `.trim()` above is deliberate. A key pasted from a terminal can carry a
+    // trailing newline, which would otherwise be a non-empty string that fails
+    // authentication — a more confusing failure than having no key at all.
+    return fallback('No GEMINI_API_KEY configured; using browser speech synthesis.');
   }
 
   let body: { text?: unknown; voiceId?: unknown };
