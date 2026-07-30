@@ -8,6 +8,15 @@
 # Cloudflare Pages reads this file too. On Vercel, set the build command to
 # `npm run build:static` and the output directory to `dist`.
 
+# Declared explicitly rather than relying on the default. The functions
+# directory must contain ONLY functions: Netlify treats every file in it as one,
+# so a test file living there is enough to break the bundling step and leave the
+# site deployed with no functions at all — which presents as a 404 on /api/tts
+# and looks identical to the redirect being wrong. Tests live in tests/.
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
 [build]
   # The install step is explicit because the repository carries bun.lock while
   # .gitignore excludes package-lock.json, so leaving it to the host means

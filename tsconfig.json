@@ -27,6 +27,7 @@
     "src",
     "shared",
     "netlify",
+    "tests",
     "server.ts"
   ]
 }
