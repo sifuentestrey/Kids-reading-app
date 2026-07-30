@@ -1,5 +1,5 @@
-import handler from '../../netlify/functions/tts';
-import { pcmToWav, resolveGeminiVoice } from '../../shared/audio';
+import handler from '../netlify/functions/tts';
+import { pcmToWav, resolveGeminiVoice } from '../shared/audio';
 
 let pass=0, fail=0;
 const check=(l:string,got:unknown,want:unknown)=>{const ok=JSON.stringify(got)===JSON.stringify(want);
