@@ -46,16 +46,26 @@ npm run build
 npm start                # serves dist/ on port 3000
 ```
 
+`start` needs no environment variables: `build` bakes `NODE_ENV=production` into
+`dist/server.cjs`, so this works the same in PowerShell as in bash.
+
 Then open `http://<your-ip>:3000` on the tablet — `ipconfig getifaddr en0` on
 macOS, `ipconfig` on Windows, `hostname -I` on Linux. The machine has to stay
 awake and on the network.
 
-### Studio TTS voice
+### Node hosting, for the studio TTS voice
 
-Copy `.env.example` to `.env` and set `ELEVENLABS_API_KEY` or `GEMINI_API_KEY`.
-Both are optional; without them the app uses the browser voice. Keys are only
-read by the Express server, so they require one of the Node deployments rather
-than static hosting.
+Deploy this way only if you want the ElevenLabs or Gemini voice rather than the
+tablet's built-in one. It needs the Express server and an API key, and on a free
+tier the instance sleeps when idle, so the first load of the day is slow.
+
+`render.yaml` is a Render Blueprint — create one from the repository and set
+`ELEVENLABS_API_KEY` or `GEMINI_API_KEY` in the dashboard. Render assigns the
+port and `server.ts` reads it from `PORT`, so the same config suits Fly or
+Heroku with only the manifest swapped.
+
+Locally, copy `.env.example` to `.env` and set the same keys. Both are optional;
+without them the app uses the browser voice and nothing breaks.
 
 ## Progress is stored per device
 
