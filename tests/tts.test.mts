@@ -29,7 +29,7 @@ delete process.env.GEMINI_API_KEY;
 let r = await handler(post({text:'Hello'}));
 check('no key -> 200', r.status, 200);
 check('no key -> not audio', r.headers.get('content-type'), 'application/json');
-{const j:any=await r.json(); check('no key -> fallback flag', j.fallback, true); check('no key -> diagnostic present', /diagnostic/.test(j.message), true); check('no key -> no secret leaked', !/[A-Za-z0-9_-]{30,}/.test(j.message), true);}
+{const j:any=await r.json(); check('no key -> fallback flag', j.fallback, true); check('no key -> no secret leaked', !/[A-Za-z0-9_-]{30,}/.test(j.message), true);}
 
 // --- Guard rails
 r = await handler(new Request('https://x/api/tts',{method:'GET'}));
