@@ -1,7 +1,5 @@
 // Sound and Speech Synthesis Service using Gemini Studio AI TTS & ElevenLabs with Web Audio API fallback
 
-import { chunkForSpeech, pickBestVoice } from './browserVoice';
-
 export interface VoiceOption {
   id: string;
   name: string;
@@ -29,23 +27,6 @@ class SoundService {
   private voiceId: string = 'Kore';
   private provider: 'gemini' | 'elevenlabs' = 'gemini';
   private serverTtsEnabled: boolean = true;
-  /**
-   * Whether a server TTS endpoint appears to exist at all.
-   *
-   * On a static deployment there is no `/api/tts`, so the request comes back as
-   * the SPA's own HTML (or a 404). Without this flag every spoken line would pay
-   * for a doomed round-trip before the browser voice started — a delay before
-   * every word, in a reading app for pre-readers.
-   *
-   * Only a well-formed non-audio reply trips it, never a network error: a flaky
-   * connection should not cost the studio voice for the rest of the session.
-   */
-  private serverTtsAvailable: boolean = true;
-  /** Cached voice list; `getVoices()` is async, so this is resolved once. */
-  private voicesReady: Promise<SpeechSynthesisVoice[]> | null = null;
-  /** The deliberately chosen voice, so the ranking runs once rather than per line. */
-  private chosenVoice: SpeechSynthesisVoice | null = null;
-  private speechPrimed = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -56,12 +37,6 @@ class SoundService {
       this.voiceId = localStorage.getItem('tts_voice_id') || 'Kore';
       this.provider = (localStorage.getItem('tts_provider') as 'gemini' | 'elevenlabs') || 'gemini';
       this.serverTtsEnabled = localStorage.getItem('tts_enabled') !== 'false';
-
-      // Start the voice list loading immediately, and prime on the first tap so
-      // iOS has granted speech before the first line the child is meant to hear.
-      void this.loadVoices();
-      window.addEventListener('pointerdown', this.primeSpeech, { once: true });
-      window.addEventListener('keydown', this.primeSpeech, { once: true });
     }
   }
 
@@ -129,7 +104,7 @@ class SoundService {
       return;
     }
 
-    if (this.serverTtsEnabled && this.serverTtsAvailable) {
+    if (this.serverTtsEnabled) {
       const cacheKey = `${this.provider}:${this.voiceId}:${cleanText}`;
       if (this.audioCache.has(cacheKey)) {
         const cachedUrl = this.audioCache.get(cacheKey)!;
@@ -161,11 +136,6 @@ class SoundService {
           this.playAudioUrl(audioUrl, options?.onEnd);
           return;
         }
-
-        // A reply arrived but it is not audio, so nothing is serving TTS here.
-        // Stop asking for the rest of the session and use the browser voice.
-        this.serverTtsAvailable = false;
-        console.info('No server TTS endpoint; using the browser voice from here on.');
       } catch (e) {
         console.warn('Server TTS fetch failed, falling back to Web Speech API', e);
       }
@@ -196,126 +166,42 @@ class SoundService {
     });
   }
 
-  /**
-   * Resolve the platform's voice list.
-   *
-   * `getVoices()` is asynchronous on every major browser: the first call returns
-   * an empty array and the list arrives later. The previous implementation read
-   * it synchronously, so on the lines that matter most — the welcome, the first
-   * lesson prompt — it found nothing, set no voice, and the platform fell back
-   * to its default, which on iOS and Android is one of the old robotic ones.
-   * That was the whole reason the app sounded broken.
-   *
-   * Safari fires `voiceschanged` unreliably, so this polls as well, and gives up
-   * after a few seconds rather than leaving a child waiting in silence.
-   */
-  private loadVoices(): Promise<SpeechSynthesisVoice[]> {
-    if (this.voicesReady) return this.voicesReady;
-
-    this.voicesReady = new Promise((resolve) => {
-      const synth = this.synth;
-      if (!synth) return resolve([]);
-
-      const immediate = synth.getVoices();
-      if (immediate.length) return resolve(immediate);
-
-      let settled = false;
-      const finish = (list: SpeechSynthesisVoice[]) => {
-        if (settled) return;
-        settled = true;
-        clearInterval(poll);
-        clearTimeout(bail);
-        resolve(list);
-      };
-      const check = () => {
-        const list = synth.getVoices();
-        if (list.length) finish(list);
-      };
-
-      synth.addEventListener?.('voiceschanged', check);
-      const poll = setInterval(check, 150);
-      const bail = setTimeout(() => finish(synth.getVoices()), 3000);
-    });
-
-    return this.voicesReady;
-  }
-
-  /**
-   * Let the platform hand out its voices before the first real line.
-   *
-   * iOS only permits speech that originates in a user gesture, and it will not
-   * populate the voice list until speech has been attempted once. Speaking a
-   * single space on the first tap satisfies both without the child hearing
-   * anything, so every line after it can be spoken freely and with the chosen
-   * voice already resolved.
-   */
-  private primeSpeech = () => {
-    if (this.speechPrimed || !this.synth) return;
-    this.speechPrimed = true;
-    try {
-      const warmup = new SpeechSynthesisUtterance(' ');
-      warmup.volume = 0;
-      this.synth.speak(warmup);
-    } catch {
-      // Priming is an optimisation; failing it must not break speech.
-    }
-    void this.loadVoices();
-  };
-
-  private async speakBrowser(
-    text: string,
-    options?: { pitch?: number; rate?: number; onEnd?: () => void }
-  ) {
+  private speakBrowser(text: string, options?: { pitch?: number; rate?: number; onEnd?: () => void }) {
     if (!this.synth) {
       options?.onEnd?.();
       return;
     }
 
-    const voices = await this.loadVoices();
-    const synth = this.synth;
-    if (!synth) {
-      options?.onEnd?.();
-      return;
+    this.synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.pitch = options?.pitch ?? 1.1;
+    utterance.rate = options?.rate ?? 0.85;
+
+    const voices = this.synth.getVoices();
+    const preferredVoice =
+      voices.find(
+        (v) =>
+          v.lang.startsWith('en') &&
+          (v.name.includes('Natural') ||
+            v.name.includes('Online') ||
+            v.name.includes('Neural') ||
+            v.name.includes('Google') ||
+            v.name.includes('Samantha') ||
+            v.name.includes('Karen') ||
+            v.name.includes('Ava'))
+      ) || voices.find((v) => v.lang.startsWith('en'));
+
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
     }
 
-    if (!this.chosenVoice || !voices.includes(this.chosenVoice)) {
-      this.chosenVoice = pickBestVoice(voices);
-      if (this.chosenVoice) {
-        console.info(`Speech voice: ${this.chosenVoice.name} (${this.chosenVoice.lang})`);
-      }
+    if (options?.onEnd) {
+      utterance.onend = () => options.onEnd!();
+      utterance.onerror = () => options.onEnd!();
     }
 
-    synth.cancel();
-
-    // Chrome drops an utterance queued in the same task as cancel(), so the
-    // speak calls are deferred by a tick. Without this the first line after any
-    // interruption is silently lost.
-    await new Promise((r) => setTimeout(r, 30));
-
-    // Long text is split so Chrome's ~15s per-utterance cut-off cannot truncate
-    // a page mid-sentence.
-    const chunks = chunkForSpeech(text);
-    if (!chunks.length) {
-      options?.onEnd?.();
-      return;
-    }
-
-    chunks.forEach((chunk, i) => {
-      const utterance = new SpeechSynthesisUtterance(chunk);
-      utterance.pitch = options?.pitch ?? 1.1;
-      utterance.rate = options?.rate ?? 0.85;
-      // Set explicitly: some browsers pick a voice from `lang` when none is set,
-      // and an unset lang can resolve to the device locale rather than English.
-      utterance.lang = this.chosenVoice?.lang ?? 'en-US';
-      if (this.chosenVoice) utterance.voice = this.chosenVoice;
-
-      if (i === chunks.length - 1 && options?.onEnd) {
-        utterance.onend = () => options.onEnd!();
-        utterance.onerror = () => options.onEnd!();
-      }
-
-      synth.speak(utterance);
-    });
+    this.synth.speak(utterance);
   }
 
   // Speak isolated phoneme

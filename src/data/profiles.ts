@@ -61,7 +61,7 @@ export const INITIAL_TREEHOUSE_ITEMS: TreehouseItem[] = [
   },
   {
     id: 'treehouse_bed',
-    name: 'Canopy Bed & Star Curtains',
+    name: 'Bunk Bed & Canopy',
     category: 'furniture',
     price: 25,
     icon: '🛏️',

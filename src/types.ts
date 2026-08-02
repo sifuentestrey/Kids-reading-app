@@ -15,13 +15,6 @@ export interface LearnerProfile {
   unlockedPets: Pet[];
   treehouseItems: TreehouseItem[];
   placedTreehouseItems: string[];
-  /**
-   * Where each placed item currently sits, as fractions of the room stage
-   * (0..1 on both axes) so a saved room reflows with the viewport instead of
-   * being pinned to pixel offsets. Items in placedTreehouseItems without an
-   * entry here fall back to their default slot.
-   */
-  placedItemLayout?: PlacedItemLayout[];
   equippedHat?: string;
   equippedOutfit?: string;
   equippedAccessory?: string;
@@ -29,15 +22,6 @@ export interface LearnerProfile {
   readingAgeEquivalent: string;
   learningMinutes: number;
   playingMinutes: number;
-}
-
-export interface PlacedItemLayout {
-  itemId: string;
-  /** Horizontal position across the room, 0 (left wall) .. 1 (right wall). */
-  x: number;
-  /** Vertical position down the room, 0 (back wall) .. 1 (front edge). Also
-   *  drives draw order: larger y renders in front. */
-  y: number;
 }
 
 export interface Pet {
