@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { LearnerProfile, TreehouseItem, Pet } from '../../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { LearnerProfile, PlacedItemLayout, TreehouseItem } from '../../types';
 import {
   TreehouseBedGraphic,
   ComfyCouchGraphic,
@@ -24,8 +24,22 @@ import {
 import { RoomPetGraphic } from './RoomPets';
 import { RoomAvatarCharacter } from './RoomAvatar';
 import { soundService } from '../../services/soundService';
-import { GAME_BACKGROUNDS } from '../../assets/gameAssets';
-import { Sun, Moon, Sunset, Sparkles, Move, Check, Lock, Unlock, Volume2 } from 'lucide-react';
+import {
+  DEFAULT_AVATAR_SLOT,
+  FLAT_FLOOR_ITEMS,
+  PET_SLOTS,
+  RoomBand,
+  RoomPoint,
+  depthZIndex,
+  getDefaultSlot,
+  getItemBand,
+} from './roomLayout';
+import { useRoomDrag } from './useRoomDrag';
+import { RoomShell, TimeOfDay } from './RoomShell';
+import { Sun, Moon, Sunset, Sunrise, Move, Lock, Unlock, RotateCcw } from 'lucide-react';
+
+/** Reserved layout id for the child's avatar. */
+const AVATAR_LAYOUT_ID = '__avatar';
 
 interface TreehouseRoomStageProps {
   currentProfile: LearnerProfile;
@@ -34,8 +48,50 @@ interface TreehouseRoomStageProps {
   equippedOutfitItem?: TreehouseItem;
   equippedAccessoryItem?: TreehouseItem;
   onItemClick: (title: string, speechText: string) => void;
-  onPlaceItemGrid?: (itemId: string, x: number, y: number) => void;
+  onMoveItem: (itemId: string, x: number, y: number) => void;
+  onResetRoomLayout: () => void;
 }
+
+/**
+ * Per-time-of-day data the stage still owns: the label and voiceover line, the
+ * HUD swatch, and the room-wide ambient wash that tints the furniture along with
+ * the shell. The sky, window view and surface lighting live in RoomShell.
+ */
+const TIME_THEMES: Record<
+  TimeOfDay,
+  { label: string; speech: string; ambient: string; Icon: typeof Sun; swatch: string }
+> = {
+  morning: {
+    label: 'Sunrise',
+    speech: 'Sunrise! Warm morning light is filling the treehouse.',
+    ambient: 'bg-gradient-to-br from-orange-300/18 via-transparent to-amber-900/10',
+    Icon: Sunrise,
+    swatch: 'bg-orange-300',
+  },
+  daytime: {
+    label: 'Daytime',
+    speech: 'Bright sunny daytime in the treehouse!',
+    ambient: 'bg-gradient-to-b from-sky-100/8 via-transparent to-amber-950/8',
+    Icon: Sun,
+    swatch: 'bg-sky-300',
+  },
+  sunset: {
+    label: 'Sunset',
+    speech: 'Golden hour! The whole treehouse glows orange and pink.',
+    ambient: 'bg-gradient-to-br from-rose-500/22 via-amber-500/8 to-indigo-950/22',
+    Icon: Sunset,
+    swatch: 'bg-rose-400',
+  },
+  night: {
+    label: 'Night',
+    speech: 'Starry night! Time for cosy bedtime stories.',
+    ambient: 'bg-gradient-to-b from-indigo-950/45 via-slate-900/30 to-slate-950/40',
+    Icon: Moon,
+    swatch: 'bg-indigo-400',
+  },
+};
+
+const TIME_ORDER: TimeOfDay[] = ['morning', 'daytime', 'sunset', 'night'];
 
 export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
   currentProfile,
@@ -44,137 +100,165 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
   equippedOutfitItem,
   equippedAccessoryItem,
   onItemClick,
-  onPlaceItemGrid,
+  onMoveItem,
+  onResetRoomLayout,
 }) => {
-  // Time of Day state
-  const [timeOfDay, setTimeOfDay] = useState<'morning' | 'daytime' | 'sunset' | 'night'>('daytime');
-  
-  // Special Interactive Toy States
-  const [activeSpecialEffect, setActiveSpecialEffect] = useState<string | null>(null);
-  const [isTvPlaying, setIsTvPlaying] = useState<boolean>(false);
-  const [lavaLampColorIndex, setLavaLampColorIndex] = useState<number>(0);
-  const [isTrainChugging, setIsTrainChugging] = useState<boolean>(false);
-  
-  // Decorate & Grid Mode States
-  const [isDecorateMode, setIsDecorateMode] = useState<boolean>(false);
-  const [isSafetyLocked, setIsSafetyLocked] = useState<boolean>(true);
-  const [selectedGridCell, setSelectedGridCell] = useState<{ x: number; y: number } | null>(null);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>('daytime');
 
-  // Active Pet Emoticons State
+  // Interactive toy states
+  const [activeSpecialEffect, setActiveSpecialEffect] = useState<string | null>(null);
+  const [isTvPlaying, setIsTvPlaying] = useState(false);
+  const [lavaLampColorIndex, setLavaLampColorIndex] = useState(0);
+  const [isTrainChugging, setIsTrainChugging] = useState(false);
+
+  // Decorate mode, gated behind a child-safety lock so items can't be moved
+  // by accident during normal play.
+  const [isDecorateMode, setIsDecorateMode] = useState(false);
+  const [isSafetyLocked, setIsSafetyLocked] = useState(true);
+
   const [petEmoticons, setPetEmoticons] = useState<Record<string, string>>({});
 
-  // Cycle pet speech emoticons randomly
+  const stageRef = useRef<HTMLDivElement>(null);
+  const theme = TIME_THEMES[timeOfDay];
+
+  const savedLayout = useMemo(() => {
+    const map = new Map<string, RoomPoint>();
+    (currentProfile.placedItemLayout ?? []).forEach((entry: PlacedItemLayout) => {
+      map.set(entry.itemId, { x: entry.x, y: entry.y });
+    });
+    return map;
+  }, [currentProfile.placedItemLayout]);
+
+  const { draggingItemId, handlePointerDown, handlePointerMove, handlePointerUp, positionFor } =
+    useRoomDrag({
+      stageRef,
+      onCommit: onMoveItem,
+      enabled: isDecorateMode && !isSafetyLocked,
+    });
+
+  const canDrag = isDecorateMode && !isSafetyLocked;
+
+  // Pets pop a mood emoji now and then.
   useEffect(() => {
     const emojis = ['❤️', '💤', '🎵', '⭐', '🐾', '🍎', '✨', '🎈'];
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+
     const interval = setInterval(() => {
-      if (currentProfile.unlockedPets.length > 0) {
-        const randomPet = currentProfile.unlockedPets[Math.floor(Math.random() * currentProfile.unlockedPets.length)];
-        const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
-        setPetEmoticons((prev) => ({ ...prev, [randomPet.id]: randomEmoji }));
-        
-        // Clear emoticon after 3.5 seconds
+      if (currentProfile.unlockedPets.length === 0) return;
+      const pet =
+        currentProfile.unlockedPets[Math.floor(Math.random() * currentProfile.unlockedPets.length)];
+      const emoji = emojis[Math.floor(Math.random() * emojis.length)];
+      setPetEmoticons((prev) => ({ ...prev, [pet.id]: emoji }));
+
+      timeouts.push(
         setTimeout(() => {
           setPetEmoticons((prev) => {
             const next = { ...prev };
-            delete next[randomPet.id];
+            delete next[pet.id];
             return next;
           });
-        }, 3500);
-      }
+        }, 3500)
+      );
     }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      timeouts.forEach(clearTimeout);
+    };
   }, [currentProfile.unlockedPets]);
 
-  // Disco Effect Trigger
+  const changeTimeOfDay = (next: TimeOfDay) => {
+    setTimeOfDay(next);
+    soundService.playPopSound();
+    soundService.speak(TIME_THEMES[next].speech);
+  };
+
   const triggerDiscoEffect = () => {
     setActiveSpecialEffect('disco');
     soundService.playSuccessChime();
-    soundService.speak("Dance party in the treehouse! Rainbow disco lights!");
-    onItemClick('Sparkle Disco Ball', 'Dance party in the treehouse! Spinning sparkly disco lights everywhere!');
+    speakAndInspect('Sparkle Disco Ball', 'Dance party in the treehouse! Spinning sparkly disco lights everywhere!');
     setTimeout(() => setActiveSpecialEffect(null), 6000);
   };
 
-  // TV Toggle Trigger
   const toggleRetroTv = () => {
-    const nextState = !isTvPlaying;
-    setIsTvPlaying(nextState);
-    if (nextState) {
+    const next = !isTvPlaying;
+    setIsTvPlaying(next);
+    if (next) {
       soundService.playSuccessChime();
-      soundService.speak("Sing along with the Phonics ABC Nursery Rhyme!");
-      onItemClick('Retro TV Console', 'Playing Phonics Alphabet Song! A-B-C-D-E-F-G!');
+      speakAndInspect('Retro TV Console', 'Playing the Phonics Alphabet Song! A-B-C-D-E-F-G!');
     } else {
       soundService.playBoopSound();
-      onItemClick('Retro TV Console', 'TV turned off.');
+      speakAndInspect('Retro TV Console', 'TV turned off.');
     }
   };
 
-  // Lava Lamp Toggle Trigger
   const cycleLavaLamp = () => {
     soundService.playPopSound();
     setLavaLampColorIndex((prev) => prev + 1);
-    soundService.speak("Glowing lava lamp!");
-    onItemClick('Magma Lava Lamp', 'Bubble lava lamp glowing brightly!');
+    speakAndInspect('Magma Lava Lamp', 'The bubbly lava lamp is glowing brightly!');
   };
 
-  // Train Chug Trigger
   const startTrainChug = () => {
     setIsTrainChugging(true);
     soundService.playSuccessChime();
-    soundService.speak("Choo choo! Alphabet train on the wooden track!");
-    onItemClick('Alphabet Train Set', 'Choo choo! The wooden alphabet train is chugging along!');
+    speakAndInspect('Alphabet Train Set', 'Choo choo! The wooden alphabet train is chugging along!');
     setTimeout(() => setIsTrainChugging(false), 5000);
   };
 
-  // Render 2.5D Vector Furniture Graphic
+  /** Fill the speech bubble and read it aloud. */
+  function speakAndInspect(title: string, text: string) {
+    onItemClick(title, text);
+    soundService.speak(text);
+  }
+
   const renderFurnitureGraphic = (item: TreehouseItem) => {
     switch (item.id) {
       case 'treehouse_bed':
-        return <TreehouseBedGraphic className="w-28 h-28 sm:w-36 sm:h-36 filter drop-shadow-xl" />;
+        return <TreehouseBedGraphic className="w-44 h-48 sm:w-52 sm:h-56" />;
       case 'comfy_couch':
-        return <ComfyCouchGraphic className="w-28 h-24 sm:w-36 sm:h-30 filter drop-shadow-xl" />;
+        return <ComfyCouchGraphic className="w-44 h-34 sm:w-52 sm:h-40" />;
       case 'bookshelf_nook':
-        return <BookshelfGraphic className="w-24 h-28 sm:w-30 sm:h-36 filter drop-shadow-xl" />;
+        return <BookshelfGraphic className="w-32 h-40 sm:w-40 sm:h-48" />;
       case 'star_telescope':
-        return <TelescopeGraphic className="w-24 h-28 sm:w-28 sm:h-32 filter drop-shadow-xl" />;
+        return <TelescopeGraphic className="w-30 h-34 sm:w-36 sm:h-40" />;
       case 'stuffed_bear':
-        return <TeddyBearGraphic className="w-20 h-24 sm:w-24 sm:h-28 filter drop-shadow-xl" />;
+        return <TeddyBearGraphic className="w-26 h-30 sm:w-30 sm:h-36" />;
       case 'wooden_train':
         return (
-          <div className={`transition-transform duration-500 ${isTrainChugging ? 'translate-x-2 animate-bounce-subtle' : ''}`}>
-            <WoodenTrainGraphic className="w-28 h-18 sm:w-36 sm:h-22 filter drop-shadow-xl" />
+          <div className={isTrainChugging ? 'animate-bounce-subtle' : ''}>
+            <WoodenTrainGraphic className="w-44 h-28 sm:w-52 sm:h-34" />
           </div>
         );
       case 'phonics_desk':
-        return <PhonicsDeskGraphic className="w-28 h-28 sm:w-34 sm:h-34 filter drop-shadow-xl" />;
+        return <PhonicsDeskGraphic className="w-40 h-44 sm:w-48 sm:h-52" />;
       case 'secret_tent':
       case 'play_tent':
-        return <SecretTentGraphic className="w-28 h-32 sm:w-36 sm:h-40 filter drop-shadow-xl" />;
+        return <SecretTentGraphic className="w-40 h-44 sm:w-48 sm:h-52" />;
       case 'treehouse_hammock':
-        return <HammockGraphic className="w-36 h-22 sm:w-44 sm:h-26 filter drop-shadow-xl" />;
+        return <HammockGraphic className="w-48 h-26 sm:w-56 sm:h-30" />;
       case 'potted_plant':
-        return <PottedPlantGraphic className="w-20 h-24 sm:w-24 sm:h-28 filter drop-shadow-xl" />;
+        return <PottedPlantGraphic className="w-26 h-32 sm:w-30 sm:h-36" />;
       case 'retro_tv':
-        return <RetroTvGraphic className="w-26 h-26 sm:w-32 sm:h-32 filter drop-shadow-xl" isPlaying={isTvPlaying} />;
+        return <RetroTvGraphic className="w-36 h-36 sm:w-44 sm:h-44" isPlaying={isTvPlaying} />;
       case 'lava_lamp':
-        return <LavaLampGraphic className="w-16 h-26 sm:w-20 sm:h-30 filter drop-shadow-xl" colorIndex={lavaLampColorIndex} />;
+        return <LavaLampGraphic className="w-20 h-32 sm:w-24 sm:h-36" colorIndex={lavaLampColorIndex} />;
       case 'neon_star':
-        return <NeonStarGraphic className="w-22 h-26 sm:w-26 sm:h-30 filter drop-shadow-xl" />;
+        return <NeonStarGraphic className="w-26 h-30 sm:w-32 sm:h-34" />;
       case 'glowing_aquarium':
-        return <AquariumGraphic className="w-28 h-24 sm:w-34 sm:h-28 filter drop-shadow-xl" />;
+        return <AquariumGraphic className="w-40 h-32 sm:w-48 sm:h-40" />;
       case 'retro_jukebox':
-        return <JukeboxGraphic className="w-26 h-30 sm:w-30 sm:h-34 filter drop-shadow-xl" />;
+        return <JukeboxGraphic className="w-34 h-40 sm:w-40 sm:h-48" />;
       case 'fairy_lights':
-        return <FairyLightsGraphic className="w-48 h-12 filter drop-shadow-md" />;
+        return <FairyLightsGraphic className="w-64 h-16" />;
       case 'disco_ball':
-        return <DiscoBallGraphic className="w-24 h-28 filter drop-shadow-xl" />;
+        return <DiscoBallGraphic className="w-30 h-36" />;
       case 'magic_wand_toy':
-        return <MagicWandGraphic className="w-20 h-24 filter drop-shadow-xl" />;
+        return <MagicWandGraphic className="w-24 h-30" />;
       case 'rainbow_rug':
-        return <RainbowRugGraphic className="w-48 h-20 filter drop-shadow-md" />;
+        return <RainbowRugGraphic className="w-72 h-32 sm:w-80 sm:h-36" />;
       default:
         return (
-          <div className="p-3 bg-amber-100 border-2 border-amber-500 rounded-2xl shadow-xl flex items-center gap-2">
+          <div className="px-3 py-2 bg-amber-50 border-3 border-amber-950 rounded-2xl shadow-cartoon-sm flex items-center gap-2">
             <span className="text-3xl">{item.icon}</span>
             <span className="font-display font-bold text-xs text-amber-950">{item.name}</span>
           </div>
@@ -182,464 +266,375 @@ export const TreehouseRoomStage: React.FC<TreehouseRoomStageProps> = ({
     }
   };
 
-  // Helper to parse numeric Y value from percentage string like '56%' -> 56 for dynamic 2.5D depth sorting
-  const parseYVal = (topStr: string): number => {
-    const num = parseInt(topStr.replace('%', ''), 10);
-    return isNaN(num) ? 50 : num;
+  const handleItemTap = (item: TreehouseItem, wasDrag: boolean) => {
+    if (wasDrag) return;
+    if (item.id === 'retro_tv') return toggleRetroTv();
+    if (item.id === 'lava_lamp') return cycleLavaLamp();
+    if (item.id === 'wooden_train') return startTrainChug();
+    if (item.id === 'disco_ball') return triggerDiscoEffect();
+    soundService.playPopSound();
+    speakAndInspect(item.name, item.soundText || item.description);
   };
 
-  // Fixed 2.5D Room Placement Coordinates
-  const slotPositions: Record<string, { left: string; top: string }> = {
-    treehouse_hammock: { left: '50%', top: '22%' },
-    bookshelf_nook: { left: '16%', top: '30%' },
-    star_telescope: { left: '84%', top: '32%' },
-    treehouse_bed: { left: '18%', top: '56%' },
-    secret_tent: { left: '82%', top: '58%' },
-    comfy_couch: { left: '26%', top: '72%' },
-    retro_tv: { left: '74%', top: '70%' },
-    lava_lamp: { left: '88%', top: '65%' },
-    neon_star: { left: '12%', top: '68%' },
-    phonics_desk: { left: '18%', top: '84%' },
-    stuffed_bear: { left: '38%', top: '82%' },
-    wooden_train: { left: '68%', top: '85%' },
-    potted_plant: { left: '88%', top: '78%' },
-    glowing_aquarium: { left: '30%', top: '32%' },
-    retro_jukebox: { left: '70%', top: '32%' },
-  };
+  /**
+   * Everything standing in the room, ordered back-to-front. Sorting by y as
+   * well as setting z-index means equal-depth items still resolve in a stable
+   * order, and an item dragged toward the bottom of the screen moves in front
+   * of whatever it passes.
+   */
+  const entities = useMemo(() => {
+    const list: Array<{
+      key: string;
+      point: RoomPoint;
+      band: RoomBand;
+      zIndex: number;
+      node: React.ReactNode;
+    }> = [];
 
-  // Roaming Pet Floor Coordinates
-  const petPositions = [
-    { left: '38%', top: '64%' },
-    { left: '62%', top: '68%' },
-    { left: '78%', top: '66%' },
-  ];
+    placedItems.forEach((item) => {
+      const band = getItemBand(item.id);
+      const saved = savedLayout.get(item.id) ?? getDefaultSlot(item.id);
+      const point = positionFor(item.id, saved);
+      const isRug = FLAT_FLOOR_ITEMS.has(item.id);
+      const isBeingDragged = draggingItemId === item.id;
 
-  // Isometric Grid Matrix for Decorate Mode (4x4 Floor Grid)
-  const gridCells = [
-    { x: 0, y: 0, left: '25%', top: '58%' },
-    { x: 1, y: 0, left: '42%', top: '58%' },
-    { x: 2, y: 0, left: '58%', top: '58%' },
-    { x: 3, y: 0, left: '75%', top: '58%' },
-    { x: 0, y: 1, left: '22%', top: '68%' },
-    { x: 1, y: 1, left: '40%', top: '68%' },
-    { x: 2, y: 1, left: '60%', top: '68%' },
-    { x: 3, y: 1, left: '78%', top: '68%' },
-    { x: 0, y: 2, left: '18%', top: '78%' },
-    { x: 1, y: 2, left: '38%', top: '78%' },
-    { x: 2, y: 2, left: '62%', top: '78%' },
-    { x: 3, y: 2, left: '82%', top: '78%' },
-  ];
-
-  // Ambient Gradient overlays based on time of day
-  const timeOverlays = {
-    morning: 'bg-gradient-to-b from-amber-500/20 via-orange-400/10 to-transparent',
-    daytime: 'bg-gradient-to-b from-sky-400/10 via-amber-200/5 to-transparent',
-    sunset: 'bg-gradient-to-b from-rose-600/30 via-amber-600/20 to-indigo-950/40',
-    night: 'bg-gradient-to-b from-indigo-950/70 via-slate-900/60 to-amber-950/80',
-  };
-
-  return (
-    <div className="relative w-full h-[440px] sm:h-[500px] rounded-3xl border-4 border-amber-950 overflow-hidden shadow-2xl bg-amber-950 select-none group flex flex-col justify-between">
-      
-      {/* HUD OVERLAY BAR: CARTOON STYLED WARM CREAM CONTAINER WITH THICK OUTLINES */}
-      <div className="absolute top-3 inset-x-3 sm:inset-x-4 z-50 flex items-center justify-between pointer-events-auto bg-amber-50 border-4 border-amber-950 p-1.5 sm:p-2 rounded-2xl shadow-2xl">
-        
-        {/* TIME OF DAY SELECTOR BUBBLE */}
-        <div className="bg-amber-100 border-2 border-amber-950 p-1 rounded-full shadow-md flex items-center gap-1">
-          <button
-            onClick={() => {
-              setTimeOfDay('morning');
-              soundService.playPopSound();
-              soundService.speak("Sunrise morning glow!");
-            }}
-            className={`p-1.5 rounded-full border-2 transition-all ${
-              timeOfDay === 'morning'
-                ? 'bg-amber-400 border-amber-950 text-amber-950 scale-105 font-bold shadow'
-                : 'bg-amber-50 border-amber-950 text-amber-800 hover:bg-amber-200'
-            }`}
-            title="Morning Sunrise 🌅"
-          >
-            <Sun className="w-4 h-4 text-amber-950" />
-          </button>
-
-          <button
-            onClick={() => {
-              setTimeOfDay('daytime');
-              soundService.playPopSound();
-              soundService.speak("Bright daytime in the treehouse!");
-            }}
-            className={`p-1.5 rounded-full border-2 transition-all ${
-              timeOfDay === 'daytime'
-                ? 'bg-sky-400 border-amber-950 text-amber-950 scale-105 font-bold shadow'
-                : 'bg-amber-50 border-amber-950 text-amber-800 hover:bg-amber-200'
-            }`}
-            title="Sunny Daytime ☀️"
-          >
-            <Sun className="w-4 h-4 text-amber-950" />
-          </button>
-
-          <button
-            onClick={() => {
-              setTimeOfDay('sunset');
-              soundService.playPopSound();
-              soundService.speak("Golden hour sunset!");
-            }}
-            className={`p-1.5 rounded-full border-2 transition-all ${
-              timeOfDay === 'sunset'
-                ? 'bg-orange-400 border-amber-950 text-amber-950 scale-105 font-bold shadow'
-                : 'bg-amber-50 border-amber-950 text-amber-800 hover:bg-amber-200'
-            }`}
-            title="Golden Hour Sunset 🌇"
-          >
-            <Sunset className="w-4 h-4 text-amber-950" />
-          </button>
-
-          <button
-            onClick={() => {
-              setTimeOfDay('night');
-              soundService.playPopSound();
-              soundService.speak("Starry night sky!");
-            }}
-            className={`p-1.5 rounded-full border-2 transition-all ${
-              timeOfDay === 'night'
-                ? 'bg-indigo-400 border-amber-950 text-amber-950 scale-105 font-bold shadow'
-                : 'bg-amber-50 border-amber-950 text-amber-800 hover:bg-amber-200'
-            }`}
-            title="Starry Night 🌙"
-          >
-            <Moon className="w-4 h-4 text-amber-950" />
-          </button>
-        </div>
-
-        {/* DECORATE & SAFETY LOCK CONTROLS */}
-        <div className="flex items-center gap-2">
-          {/* Child Safety Lock */}
-          <button
-            onClick={() => {
-              setIsSafetyLocked(!isSafetyLocked);
-              soundService.playBoopSound();
-              soundService.speak(isSafetyLocked ? "Safety lock unlocked!" : "Safety lock locked!");
-            }}
-            className={`px-3 py-1.5 rounded-xl border-2 border-amber-950 font-display font-black text-xs flex items-center gap-1.5 shadow-md transition-all ${
-              isSafetyLocked
-                ? 'bg-amber-200 text-amber-950'
-                : 'bg-emerald-400 text-amber-950 animate-pulse'
-            }`}
-          >
-            {isSafetyLocked ? <Lock className="w-4 h-4 text-amber-950" /> : <Unlock className="w-4 h-4 text-amber-950" />}
-            <span className="hidden sm:inline">{isSafetyLocked ? "Locked" : "Unlocked"}</span>
-          </button>
-
-          {/* Decorate Grid Mode Toggle */}
-          <button
-            onClick={() => {
-              if (isSafetyLocked) {
-                soundService.playBoopSound();
-                soundService.speak("Unlock safety lock first to decorate!");
-                return;
-              }
-              setIsDecorateMode(!isDecorateMode);
-              soundService.playSuccessChime();
-              soundService.speak(isDecorateMode ? "Viewing treehouse room!" : "Decorate grid active!");
-            }}
-            className={`px-3.5 py-1.5 rounded-xl border-2 border-amber-950 font-display font-black text-xs flex items-center gap-1.5 shadow-md transition-all ${
-              isDecorateMode
-                ? 'bg-emerald-400 text-amber-950 scale-105 animate-pulse'
-                : 'bg-yellow-400 text-amber-950 hover:bg-yellow-300'
-            }`}
-          >
-            <Move className="w-4 h-4 text-amber-950" />
-            <span>{isDecorateMode ? "Finish Decorating" : "Decorate Grid"}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 1. ROOM BACKGROUND: HIGH QUALITY WOOD CABIN TEXTURE ASSET */}
-      <img
-        src={GAME_BACKGROUNDS.woodCabinInterior}
-        alt="Wood Cabin Interior"
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-90"
-        referrerPolicy="no-referrer"
-      />
-
-      {/* DYNAMIC VOLUMETRIC CIRCULAR TREEHOUSE WINDOW */}
-      <div
-        onClick={() => {
-          // Cycle time of day when window is clicked
-          const nextTime = timeOfDay === 'morning' ? 'daytime' : timeOfDay === 'daytime' ? 'sunset' : timeOfDay === 'sunset' ? 'night' : 'morning';
-          setTimeOfDay(nextTime);
-          soundService.playPopSound();
-          soundService.speak(`Window view changed to ${nextTime}!`);
-        }}
-        className="absolute left-1/2 -translate-x-1/2 top-8 w-44 sm:w-52 h-44 sm:h-52 rounded-full border-8 border-amber-950 shadow-inner overflow-hidden cursor-pointer pointer-events-auto z-0 group/window transition-all duration-700"
-      >
-        {/* Morning View */}
-        {timeOfDay === 'morning' && (
-          <div className="absolute inset-0 bg-gradient-to-b from-orange-300 via-amber-200 to-emerald-400">
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 w-16 h-16 bg-amber-200 rounded-full blur-[2px] animate-pulse" />
-            <div className="absolute top-6 left-2 w-16 h-8 bg-white/70 rounded-full blur-[1px]" />
-          </div>
-        )}
-
-        {/* Daytime View */}
-        {timeOfDay === 'daytime' && (
-          <div className="absolute inset-0 bg-gradient-to-b from-sky-300 via-sky-200 to-emerald-300">
-            <div className="absolute top-4 left-4 w-16 h-8 bg-white/80 rounded-full blur-[1px] animate-pulse" />
-            <div className="absolute top-8 right-6 w-12 h-6 bg-white/70 rounded-full blur-[1px]" />
-            <div className="absolute -bottom-2 inset-x-0 h-24 bg-emerald-600 rounded-t-full opacity-90" />
-          </div>
-        )}
-
-        {/* Sunset View */}
-        {timeOfDay === 'sunset' && (
-          <div className="absolute inset-0 bg-gradient-to-b from-rose-500 via-orange-400 to-emerald-700">
-            <div className="absolute top-8 left-1/2 -translate-x-1/2 w-20 h-20 bg-yellow-300 rounded-full blur-[3px]" />
-            <div className="absolute top-6 left-4 w-14 h-6 bg-rose-200/60 rounded-full" />
-          </div>
-        )}
-
-        {/* Night View */}
-        {timeOfDay === 'night' && (
-          <div className="absolute inset-0 bg-gradient-to-b from-indigo-950 via-slate-900 to-emerald-950">
-            {/* Glowing Crescent Moon */}
-            <div className="absolute top-4 right-8 w-12 h-12 rounded-full bg-yellow-200 shadow-[0_0_15px_rgba(253,224,71,0.8)]" />
-            {/* Twinkling Stars */}
-            <span className="absolute top-6 left-6 text-yellow-200 text-xs animate-ping">✨</span>
-            <span className="absolute top-12 left-16 text-yellow-100 text-xs animate-pulse">⭐</span>
-            <span className="absolute top-10 right-20 text-yellow-200 text-xs animate-pulse">✨</span>
-          </div>
-        )}
-
-        {/* Distant Forest Canopy */}
-        <div className="absolute -bottom-4 inset-x-0 h-20 bg-emerald-800/90 rounded-t-full pointer-events-none" />
-
-        {/* Window Wooden Cross Grid */}
-        <div className="absolute inset-0 border-r-4 border-b-4 border-amber-950/60 pointer-events-none" />
-      </div>
-
-      {/* 2. ISOMETRIC 2.5D PERSPECTIVE WOODEN FLOOR OVERLAY */}
-      <div className="absolute inset-x-0 bottom-0 h-[50%] bg-gradient-to-b from-transparent via-amber-950/10 to-amber-950/40 border-t border-amber-900/30 shadow-inner pointer-events-none">
-        {/* Floor Planks Lines in Perspective */}
-        <div className="absolute inset-0 opacity-20 flex justify-around">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="h-full w-0.5 border-r border-amber-950 transform -skew-x-12" />
-          ))}
-        </div>
-      </div>
-
-      {/* TIME OF DAY AMBIENT LIGHTING OVERLAY */}
-      <div className={`absolute inset-0 pointer-events-none transition-all duration-700 z-40 ${timeOverlays[timeOfDay]}`}>
-        {/* Floating Ambient Sparkles / Light Motes */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-40">
-          <div className="absolute top-1/4 left-1/5 text-amber-200 text-xs animate-pulse">✨</div>
-          <div className="absolute top-1/3 right-1/4 text-yellow-100 text-sm animate-ping">⭐</div>
-          <div className="absolute top-1/2 left-2/3 text-amber-300 text-xs animate-bounce">✨</div>
-          <div className="absolute bottom-1/3 left-1/3 text-yellow-200 text-xs animate-pulse">✨</div>
-        </div>
-      </div>
-
-      {/* DISCO PARTY SPARKLE LIGHT RAYS */}
-      {activeSpecialEffect === 'disco' && (
-        <div className="absolute inset-0 pointer-events-none z-45 flex flex-wrap justify-around items-center opacity-80 animate-spin-slow">
-          <span className="text-4xl text-yellow-300 drop-shadow-[0_0_12px_rgba(253,224,71,1)]">✨</span>
-          <span className="text-4xl text-pink-400 drop-shadow-[0_0_12px_rgba(244,114,182,1)]">💖</span>
-          <span className="text-4xl text-cyan-300 drop-shadow-[0_0_12px_rgba(103,232,249,1)]">⭐</span>
-          <span className="text-4xl text-purple-400 drop-shadow-[0_0_12px_rgba(192,132,252,1)]">✨</span>
-        </div>
-      )}
-
-      {/* ISOMETRIC DECORATE GRID OVERLAY (WHEN DECORATE MODE ACTIVE) */}
-      {isDecorateMode && (
-        <div className="absolute inset-x-0 bottom-4 h-[48%] z-45 pointer-events-auto">
-          {gridCells.map((cell) => {
-            const isSelected = selectedGridCell?.x === cell.x && selectedGridCell?.y === cell.y;
-            return (
-              <div
-                key={`${cell.x}-${cell.y}`}
-                style={{ left: cell.left, top: cell.top }}
-                onClick={() => {
-                  setSelectedGridCell({ x: cell.x, y: cell.y });
-                  soundService.playPopSound();
-                  soundService.speak(`Selected grid spot ${cell.x + 1}, ${cell.y + 1}`);
-                }}
-                className={`absolute -translate-x-1/2 -translate-y-1/2 w-20 h-10 rounded-full border-2 transform rotate-x-60 cursor-pointer transition-all ${
-                  isSelected
-                    ? 'bg-emerald-400/50 border-emerald-200 scale-110 shadow-[0_0_15px_rgba(52,211,153,1)]'
-                    : 'bg-yellow-300/20 border-yellow-400/60 hover:bg-yellow-300/40'
-                }`}
-              >
-                <span className="absolute inset-0 flex items-center justify-center font-display font-extrabold text-[10px] text-yellow-200">
-                  {cell.x + 1},{cell.y + 1}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* FAIRY LIGHTS CEILING GARLAND */}
-      {placedItems.some((i) => i.id === 'fairy_lights') && (
-        <div className="absolute top-2 inset-x-4 z-40 flex justify-around items-center pointer-events-none">
-          {['✨', '💡', '🌟', '💡', '✨', '💡', '🌟', '💡', '✨'].map((light, idx) => (
-            <span key={idx} className="text-2xl drop-shadow-[0_0_10px_rgba(253,224,71,0.9)] animate-pulse">
-              {light}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* DISCO BALL SPINNER */}
-      {placedItems.some((i) => i.id === 'disco_ball') && (
-        <div className="absolute top-1 left-1/2 -translate-x-1/2 z-42 flex flex-col items-center">
-          <div className="w-0.5 h-6 bg-amber-200" />
-          <button
-            onClick={triggerDiscoEffect}
-            className="text-4xl sm:text-5xl drop-shadow-2xl hover:scale-125 transition-transform animate-spin-slow cursor-pointer"
-            title="Click to start disco party!"
-          >
-            🪩
-          </button>
-        </div>
-      )}
-
-      {/* 3. CENTER FLOOR 2.5D PLUSH RAINBOW RUG */}
-      {placedItems.some((i) => i.id === 'rainbow_rug') && (
-        <div
-          style={{ left: '50%', top: '70%', zIndex: 10 }}
-          className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer pointer-events-auto hover:scale-105 transition-transform"
-          onClick={() => {
-            soundService.playPopSound();
-            soundService.speak("Soft plush rainbow rug!");
-            onItemClick('Rainbow Plush Rug', 'Soft, colorful woven rug at the center of the treehouse floor!');
-          }}
-        >
-          <RainbowRugGraphic className="w-56 h-24 sm:w-64 sm:h-28 filter drop-shadow-2xl" />
-        </div>
-      )}
-
-      {/* 4. PLACED 2.5D FURNITURE & TOYS */}
-      {placedItems.map((item) => {
-        if (item.id === 'rainbow_rug' || item.id === 'fairy_lights' || item.id === 'disco_ball') return null;
-        const coords = slotPositions[item.id] || { left: '50%', top: '60%' };
-        const computedZIndex = parseYVal(coords.top);
-
-        return (
+      list.push({
+        key: item.id,
+        point,
+        band,
+        zIndex: isBeingDragged ? 99 : depthZIndex(point, band, isRug),
+        node: (
           <div
-            key={item.id}
-            style={{
-              left: coords.left,
-              top: coords.top,
-              zIndex: computedZIndex,
+            className={`relative flex flex-col items-center bg-transparent ${
+              canDrag ? 'cursor-grab' : 'cursor-pointer'
+            } ${isBeingDragged ? 'room-item-dragging scale-105' : ''}`}
+            onPointerDown={(event) => handlePointerDown(event, item.id, point)}
+            onPointerMove={(event) => handlePointerMove(event, band)}
+            onPointerUp={(event) => {
+              const wasDrag = handlePointerUp(event);
+              handleItemTap(item, wasDrag);
             }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center group/item cursor-pointer pointer-events-auto"
-            onClick={() => {
-              if (item.id === 'retro_tv') toggleRetroTv();
-              else if (item.id === 'lava_lamp') cycleLavaLamp();
-              else if (item.id === 'wooden_train') startTrainChug();
-              else {
-                soundService.playPopSound();
-                soundService.speak(item.name);
-                onItemClick(item.name, item.soundText || item.description);
-              }
-            }}
+            onPointerCancel={(event) => handlePointerUp(event)}
           >
-            {/* 2.5D Ground Oval Shadow */}
-            <div className="absolute -bottom-2 w-20 sm:w-28 h-6 bg-black/50 rounded-[50%] blur-[3px] pointer-events-none transform scale-x-125" />
+            {/* Ground contact shadow — skipped for rugs (already flat) and for
+                anything mounted on the wall or ceiling. */}
+            {band === 'floor' && !isRug && (
+              <div className="absolute bottom-0 w-20 sm:w-24 h-4 bg-black/45 rounded-[50%] blur-[3px] pointer-events-none" />
+            )}
 
-            {/* Furniture Graphic */}
-            <div className="group-hover/item:scale-115 group-hover/item:-translate-y-2 active:scale-95 transition-all">
+            <div className="relative bg-transparent transition-transform duration-200 hover:-translate-y-1">
               {renderFurnitureGraphic(item)}
             </div>
 
-            {/* Hover Item Title Badge */}
-            <span className="mt-1 opacity-0 group-hover/item:opacity-100 transition-opacity bg-amber-950/90 text-yellow-300 font-display font-extrabold text-[10px] px-2.5 py-0.5 rounded-full border border-amber-400 shadow-xl whitespace-nowrap">
-              {item.name}
-            </span>
+            {/* Only the item under the finger gets a label — a badge on all
+                twelve items at once buries the room. */}
+            {isBeingDragged && (
+              <span className="mt-0.5 bg-emerald-400 text-amber-950 border-2 border-amber-950 font-display font-black text-[9px] px-2 py-0.5 rounded-full shadow-cartoon-sm whitespace-nowrap">
+                {item.name}
+              </span>
+            )}
           </div>
-        );
-      })}
+        ),
+      });
+    });
 
-      {/* 5. UNLOCKED PETS ROAMING THE 2.5D FLOOR WITH SPEECH EMOTICONS */}
-      {currentProfile.unlockedPets.map((pet, idx) => {
-        const coords = petPositions[idx % petPositions.length];
-        const activeEmoticon = petEmoticons[pet.id];
-        const computedZIndex = parseYVal(coords.top);
+    // Pets roam fixed spots on the floor but still take part in depth sorting.
+    currentProfile.unlockedPets.forEach((pet, index) => {
+      const point = PET_SLOTS[index % PET_SLOTS.length];
+      const emoticon = petEmoticons[pet.id];
 
-        return (
-          <div
-            key={pet.id}
-            style={{
-              left: coords.left,
-              top: coords.top,
-              zIndex: computedZIndex,
-            }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center cursor-pointer pointer-events-auto group/pet"
+      list.push({
+        key: `pet-${pet.id}`,
+        point,
+        band: 'floor',
+        zIndex: depthZIndex(point, 'floor'),
+        node: (
+          <button
+            type="button"
+            className="relative flex flex-col items-center bg-transparent group/pet"
             onClick={() => {
               soundService.playSuccessChime();
-              soundService.speak(`${pet.name} the ${pet.species}!`);
-              onItemClick(`${pet.name} the ${pet.species}`, `${pet.name} says: ${pet.description}`);
+              speakAndInspect(`${pet.name} the ${pet.species}`, `${pet.name} says: ${pet.description}`);
             }}
           >
-            {/* Active Pet Speech Emoticon Bubble */}
-            {activeEmoticon && (
-              <div className="absolute -top-10 bg-white text-slate-900 text-lg px-2 py-0.5 rounded-full border-2 border-amber-400 shadow-xl animate-bounce">
-                {activeEmoticon}
-              </div>
+            {emoticon && (
+              <span className="absolute -top-9 bg-amber-50 text-lg px-2 py-0.5 rounded-full border-2 border-amber-950 shadow-cartoon-sm animate-bounce">
+                {emoticon}
+              </span>
             )}
-
-            {/* Pet Ground Shadow */}
-            <div className="absolute -bottom-1 w-14 h-4 bg-black/50 rounded-[50%] blur-[2px] pointer-events-none" />
-
-            <div className="group-hover/pet:scale-120 group-hover/pet:-translate-y-2 transition-all animate-bounce-subtle">
-              <RoomPetGraphic species={pet.species} className="w-16 h-16 sm:w-20 sm:h-20 filter drop-shadow-lg" />
+            <div className="absolute bottom-0 w-14 h-3.5 bg-black/45 rounded-[50%] blur-[2px] pointer-events-none" />
+            <div className="animate-bounce-subtle transition-transform group-hover/pet:scale-110">
+              <RoomPetGraphic species={pet.species} className="w-20 h-20 sm:w-24 sm:h-24" />
             </div>
-
-            <span className="opacity-0 group-hover/pet:opacity-100 transition-opacity bg-emerald-950 text-emerald-200 font-display font-bold text-[9px] px-2 py-0.5 rounded-full border border-emerald-400 shadow-md whitespace-nowrap">
+            <span className="opacity-0 group-hover/pet:opacity-100 transition-opacity bg-emerald-500 text-amber-950 border-2 border-amber-950 font-display font-black text-[9px] px-2 py-0.5 rounded-full shadow-cartoon-sm whitespace-nowrap">
               {pet.name}
             </span>
-          </div>
-        );
-      })}
+          </button>
+        ),
+      });
+    });
 
-      {/* 6. CENTER 2.5D CHARACTER AVATAR STAGE */}
-      <div
-        style={{
-          left: '50%',
-          top: '64%',
-          zIndex: parseYVal('64%'),
-        }}
-        className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-auto cursor-pointer group/avatar"
-        onClick={() => {
-          soundService.playSuccessChime();
-          soundService.speak(`Hi! I'm ${currentProfile.name}! Welcome to my treehouse!`);
-          onItemClick(
-            `${currentProfile.name}'s Avatar`,
-            `Hi! I'm ${currentProfile.name}! Dressed in my ${equippedHatItem?.name || 'hat'}, ${equippedOutfitItem?.name || 'outfit'}, and ready to learn!`
-          );
-        }}
-      >
-        {/* Character Floor Shadow */}
-        <div className="absolute -bottom-2 w-28 sm:w-32 h-8 bg-black/60 rounded-[50%] blur-[4px] pointer-events-none" />
+    // The child's avatar — draggable like furniture, under a reserved id.
+    const avatarSaved = savedLayout.get(AVATAR_LAYOUT_ID) ?? DEFAULT_AVATAR_SLOT;
+    const avatarPoint = positionFor(AVATAR_LAYOUT_ID, avatarSaved);
+    const avatarDragging = draggingItemId === AVATAR_LAYOUT_ID;
 
-        {/* Full 2.5D Character Avatar */}
-        <div className="group-hover/avatar:scale-110 group-hover/avatar:-translate-y-2 transition-all">
+    list.push({
+      key: 'avatar',
+      point: avatarPoint,
+      band: 'floor',
+      zIndex: avatarDragging ? 99 : depthZIndex(avatarPoint, 'floor'),
+      node: (
+        <div
+          className={`relative flex flex-col items-center bg-transparent ${
+            canDrag ? 'cursor-grab' : 'cursor-pointer'
+          } ${avatarDragging ? 'room-item-dragging' : ''}`}
+          onPointerDown={(event) => handlePointerDown(event, AVATAR_LAYOUT_ID, avatarPoint)}
+          onPointerMove={(event) => handlePointerMove(event, 'floor')}
+          onPointerUp={(event) => {
+            const wasDrag = handlePointerUp(event);
+            if (wasDrag) return;
+            soundService.playSuccessChime();
+            speakAndInspect(
+              `${currentProfile.name}'s Avatar`,
+              `Hi! I'm ${currentProfile.name}! Welcome to my treehouse!`
+            );
+          }}
+          onPointerCancel={(event) => handlePointerUp(event)}
+        >
+          <div className="absolute bottom-6 w-24 sm:w-28 h-5 bg-black/50 rounded-[50%] blur-[4px] pointer-events-none" />
           <RoomAvatarCharacter
             name={currentProfile.name}
             avatarIcon={currentProfile.avatar}
             equippedHatId={currentProfile.equippedHat}
             equippedOutfitId={currentProfile.equippedOutfit}
             equippedAccessoryId={currentProfile.equippedAccessory}
-            className="w-28 h-40 sm:w-34 sm:h-48"
+            className="w-32 h-44 sm:w-36 sm:h-52"
           />
+
+          {/* Name tag tucked against the character's feet. */}
+          <div className="-mt-3 bg-amber-50 text-amber-950 border-3 border-amber-950 font-display font-black text-xs px-3 py-0.5 rounded-full shadow-cartoon-sm flex items-center gap-1.5 whitespace-nowrap pointer-events-none">
+            <span>{currentProfile.name}</span>
+            {equippedHatItem && <span>{equippedHatItem.icon}</span>}
+          </div>
+        </div>
+      ),
+    });
+
+    return list.sort((a, b) => a.point.y - b.point.y);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    placedItems,
+    savedLayout,
+    positionFor,
+    draggingItemId,
+    canDrag,
+    currentProfile,
+    petEmoticons,
+    isTvPlaying,
+    isTrainChugging,
+    lavaLampColorIndex,
+    equippedHatItem,
+  ]);
+
+  return (
+    <div
+      ref={stageRef}
+      className="room-stage relative w-full h-[440px] sm:h-[500px] rounded-3xl border-4 border-amber-950 overflow-hidden shadow-cartoon-lg bg-amber-950"
+    >
+      {/* ============ ROOM SHELL ============
+          One SVG drawing the whole room in perspective: walls, ceiling beams,
+          floor, window, and trim. See RoomShell.tsx for the geometry contract
+          it shares with roomLayout's floor band. */}
+      <RoomShell timeOfDay={timeOfDay} />
+
+      {/* Clickable window: the art lives in RoomShell, this is just the hit
+          target sitting over it. Its geometry mirrors the shell's viewBox —
+          circle at (500,168) r=96 of 1000x560. */}
+      <button
+        type="button"
+        onClick={() => {
+          const next = TIME_ORDER[(TIME_ORDER.indexOf(timeOfDay) + 1) % TIME_ORDER.length];
+          changeTimeOfDay(next);
+        }}
+        title="Click the window to change the time of day"
+        aria-label="Change the time of day"
+        className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 top-[30%] w-[19.2%] h-[34.3%] rounded-full z-[6] hover:bg-amber-50/10 transition-colors"
+      />
+
+      {/* Placement grid, shown only while decorating. It matches the shell's
+          floor: lines run from the wall base out to the front edge, so the guide
+          recedes with the room instead of lying flat across it. */}
+      {canDrag && (
+        <svg
+          viewBox="0 0 1000 560"
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full z-[6] pointer-events-none"
+        >
+          {Array.from({ length: 9 }, (_, i) => {
+            const t = i / 8;
+            return (
+              <line
+                key={`g-${i}`}
+                x1={150 + t * 700}
+                y1={300}
+                x2={-120 + t * 1240}
+                y2={560}
+                stroke="#FDE047"
+                strokeWidth="2"
+                opacity="0.55"
+              />
+            );
+          })}
+          {[0.12, 0.3, 0.52, 0.78].map((t, i) => {
+            const y = 300 + t * 260;
+            const spread = t * 150;
+            return (
+              <line
+                key={`gc-${i}`}
+                x1={150 - spread}
+                y1={y}
+                x2={850 + spread}
+                y2={y}
+                stroke="#FDE047"
+                strokeWidth="2"
+                opacity="0.55"
+              />
+            );
+          })}
+        </svg>
+      )}
+
+      {/* ============ PLACED ITEMS, PETS, AVATAR ============ */}
+      {entities.map((entity) => (
+        <div
+          key={entity.key}
+          style={{
+            left: `${entity.point.x * 100}%`,
+            top: `${entity.point.y * 100}%`,
+            zIndex: entity.zIndex,
+          }}
+          className="absolute -translate-x-1/2 -translate-y-full bg-transparent"
+        >
+          {entity.node}
+        </div>
+      ))}
+
+      {/* ============ AMBIENT LIGHT ============
+          Sits above the furniture (which tops out at z 99) but below the HUD,
+          so the time of day tints the whole scene rather than only the shell. */}
+      <div
+        className={`absolute inset-0 pointer-events-none transition-colors duration-700 z-[55] ${theme.ambient}`}
+      />
+
+      {activeSpecialEffect === 'disco' && (
+        <div className="absolute inset-0 pointer-events-none z-[45] flex flex-wrap justify-around items-center opacity-80 animate-spin-slow">
+          <span className="text-4xl drop-shadow-[0_0_12px_rgba(253,224,71,1)]">✨</span>
+          <span className="text-4xl drop-shadow-[0_0_12px_rgba(244,114,182,1)]">💖</span>
+          <span className="text-4xl drop-shadow-[0_0_12px_rgba(103,232,249,1)]">⭐</span>
+          <span className="text-4xl drop-shadow-[0_0_12px_rgba(192,132,252,1)]">✨</span>
+        </div>
+      )}
+
+      {/* ============ NEUBRUTALIST HUD ============ */}
+      <div className="absolute top-3 inset-x-3 z-[60] flex items-start justify-between gap-2">
+        {/* Time of day */}
+        <div className="flex items-center gap-1 bg-amber-50 border-4 border-amber-950 p-1.5 rounded-2xl shadow-cartoon">
+          {TIME_ORDER.map((key) => {
+            const option = TIME_THEMES[key];
+            const isActive = timeOfDay === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => changeTimeOfDay(key)}
+                title={option.label}
+                aria-label={option.label}
+                aria-pressed={isActive}
+                className={`p-1.5 rounded-xl border-3 border-amber-950 transition-transform ${
+                  isActive
+                    ? `${option.swatch} scale-105 shadow-cartoon-sm`
+                    : 'bg-amber-50 hover:bg-amber-200'
+                }`}
+              >
+                <option.Icon className="w-4 h-4 text-amber-950" strokeWidth={2.5} />
+              </button>
+            );
+          })}
         </div>
 
-        {/* Character Name Tag */}
-        <div className="mt-1 bg-amber-950 text-yellow-300 font-display font-extrabold text-xs px-3.5 py-1 rounded-full border-2 border-yellow-400 shadow-2xl flex items-center gap-1.5 whitespace-nowrap">
-          <span>{currentProfile.name}</span>
-          {equippedHatItem && <span>{equippedHatItem.icon}</span>}
+        <div className="flex items-center gap-2">
+          {canDrag && (
+            <button
+              type="button"
+              onClick={() => {
+                onResetRoomLayout();
+                soundService.speak('Furniture back to its starting spots!');
+              }}
+              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-200 border-4 border-amber-950 rounded-xl shadow-cartoon-sm font-display font-black text-xs text-amber-950 flex items-center gap-1.5"
+              title="Put every item back where it started"
+            >
+              <RotateCcw className="w-4 h-4" strokeWidth={2.5} />
+              <span className="hidden sm:inline">Reset</span>
+            </button>
+          )}
+
+          {/* Child safety lock */}
+          <button
+            type="button"
+            onClick={() => {
+              const nowUnlocked = isSafetyLocked;
+              setIsSafetyLocked(!isSafetyLocked);
+              if (!nowUnlocked) setIsDecorateMode(false);
+              soundService.playBoopSound();
+              soundService.speak(nowUnlocked ? 'Decorating unlocked!' : 'Room locked so nothing moves.');
+            }}
+            className={`px-2.5 py-1.5 border-4 border-amber-950 rounded-xl shadow-cartoon-sm font-display font-black text-xs text-amber-950 flex items-center gap-1.5 ${
+              isSafetyLocked ? 'bg-amber-200 hover:bg-amber-300' : 'bg-emerald-400'
+            }`}
+          >
+            {isSafetyLocked ? (
+              <Lock className="w-4 h-4" strokeWidth={2.5} />
+            ) : (
+              <Unlock className="w-4 h-4" strokeWidth={2.5} />
+            )}
+            <span className="hidden sm:inline">{isSafetyLocked ? 'Locked' : 'Unlocked'}</span>
+          </button>
+
+          {/* Decorate mode */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isSafetyLocked) {
+                soundService.playBoopSound();
+                soundService.speak('Tap the lock first to start decorating!');
+                return;
+              }
+              const next = !isDecorateMode;
+              setIsDecorateMode(next);
+              soundService.playSuccessChime();
+              soundService.speak(
+                next ? 'Decorate mode! Drag your furniture anywhere.' : 'All done decorating!'
+              );
+            }}
+            className={`px-3 py-1.5 border-4 border-amber-950 rounded-xl shadow-cartoon-sm font-display font-black text-xs text-amber-950 flex items-center gap-1.5 transition-transform ${
+              isDecorateMode ? 'bg-emerald-400 scale-102' : 'bg-yellow-400 hover:bg-yellow-300'
+            } ${isSafetyLocked ? 'opacity-60' : ''}`}
+          >
+            <Move className="w-4 h-4" strokeWidth={2.5} />
+            <span>{isDecorateMode ? 'Done' : 'Decorate'}</span>
+          </button>
         </div>
       </div>
+
+      {/* Decorate-mode helper strip */}
+      {canDrag && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-[60] bg-amber-50 border-4 border-amber-950 rounded-2xl px-3 py-1.5 shadow-cartoon-sm">
+          <span className="font-display font-black text-[11px] text-amber-950">
+            Drag any item — things nearer the front go on top!
+          </span>
+        </div>
+      )}
     </div>
   );
 };
-

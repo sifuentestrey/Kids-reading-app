@@ -1,63 +1,30 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Modality } from "@google/genai";
+import {
+  TTS_MODELS,
+  resolveGeminiVoice,
+  synthesizeGeminiSpeech,
+} from "./shared/audio";
 
-let genAIClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
-  if (!genAIClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) {
-      genAIClient = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            "User-Agent": "aistudio-build",
-          },
-        },
-      });
-    }
-  }
-  return genAIClient;
-}
-
-function pcmToWav(
-  pcmBuffer: Buffer,
-  sampleRate = 24000,
-  numChannels = 1,
-  bitsPerSample = 16
-): Buffer {
-  const header = Buffer.alloc(44);
-  const dataSize = pcmBuffer.length;
-  const fileSize = dataSize + 36;
-  const byteRate = (sampleRate * numChannels * bitsPerSample) / 8;
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-
-  // RIFF descriptor
-  header.write("RIFF", 0);
-  header.writeUInt32LE(fileSize, 4);
-  header.write("WAVE", 8);
-
-  // fmt sub-chunk
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20); // PCM format
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-
-  // data sub-chunk
-  header.write("data", 36);
-  header.writeUInt32LE(dataSize, 40);
-
-  return Buffer.concat([header, pcmBuffer]);
+/**
+ * Same two names, same order, as the Netlify function: `GOOGLE_AI_STUDIO_KEY`
+ * wins because Netlify's AI Gateway claims `GEMINI_API_KEY` for a token that is
+ * not a Google key. Keeping the order identical means a working local setup
+ * stays working once deployed.
+ */
+function getGeminiKey(): string | undefined {
+  return (
+    process.env.GOOGLE_AI_STUDIO_KEY?.trim() || process.env.GEMINI_API_KEY?.trim() || undefined
+  );
 }
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // Hosts that run this for us (Render, Fly, Heroku) assign a port and expect the
+  // service to listen on it, so an environment variable has to win over the local
+  // default or the deployment never becomes reachable.
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -117,47 +84,31 @@ async function startServer() {
         }
       }
 
-      // 2. High-Quality Gemini AI Studio TTS (gemini-3.1-flash-tts-preview)
-      const ai = getGeminiClient();
-      if (ai) {
-        try {
-          const validGeminiVoices = ["Kore", "Puck", "Fenrir", "Zephyr", "Charon"];
-          const selectedVoice = validGeminiVoices.includes(voiceId) ? voiceId : "Kore";
+      // 2. High-Quality Gemini AI Studio TTS. Same helper the Netlify function
+      // uses, so the voice cannot differ depending on how the app was deployed.
+      const geminiKey = getGeminiKey();
+      if (geminiKey) {
+        const selectedVoice = resolveGeminiVoice(voiceId);
 
-          const geminiRes = await ai.models.generateContent({
-            model: "gemini-3.1-flash-tts-preview",
-            contents: [
-              {
-                parts: [
-                  {
-                    text: `Say in a warm, gentle, clear, natural, expressive storybook narrator voice for young children: ${cleanText}`,
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseModalities: [Modality.AUDIO],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: selectedVoice },
-                },
-              },
-            },
-          });
-
-          const audioPart = geminiRes.candidates?.[0]?.content?.parts?.[0];
-          const base64Audio = audioPart?.inlineData?.data;
-
-          if (base64Audio) {
-            const pcmBuffer = Buffer.from(base64Audio, "base64");
-            const wavBuffer = pcmToWav(pcmBuffer, 24000, 1, 16);
+        for (const model of TTS_MODELS) {
+          try {
+            const wavBuffer = await synthesizeGeminiSpeech({
+              apiKey: geminiKey,
+              text: cleanText,
+              model,
+              voiceName: selectedVoice,
+            });
 
             res.setHeader("Content-Type", "audio/wav");
             res.setHeader("Cache-Control", "public, max-age=86400");
+            res.setHeader("X-TTS-Model", model);
             return res.send(wavBuffer);
+          } catch (geminiErr) {
+            console.warn(
+              `Gemini TTS failed on ${model}:`,
+              geminiErr instanceof Error ? geminiErr.message : geminiErr
+            );
           }
-        } catch (geminiErr: any) {
-          console.log("Gemini TTS unavailable or quota reached, falling back to Web Speech API.");
         }
       }
 
@@ -200,6 +151,4 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error("Fatal server startup error:", err);
-});
+startServer();
