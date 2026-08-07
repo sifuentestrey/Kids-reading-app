@@ -78,15 +78,43 @@ matter which voice is chosen. For a natural storybook narrator the app needs a
 real neural TTS service, and `netlify/functions/tts.ts` provides it without
 giving up static hosting:
 
-1. Create a free API key at https://aistudio.google.com/apikey
+1. Create a free API key at https://aistudio.google.com/apikey — it looks like
+   `AIza…` and is 39 characters long.
 2. In Netlify: Site configuration -> Environment variables -> add
-   `GEMINI_API_KEY` with that value.
+   **`GOOGLE_AI_STUDIO_KEY`** with that value. Paste the key into the *Value*
+   field; the *Key* field is the variable's name.
 3. Redeploy (Deploys -> Trigger deploy). Functions only pick up new environment
    variables on a fresh deploy.
 
 Until that key exists the function reports itself unavailable and the app uses
 the device voice, so nothing breaks while it is missing. Voices available:
 `Kore` (default, warmest), `Puck`, `Fenrir`, `Zephyr`, `Charon`.
+
+**Do not use `GEMINI_API_KEY` on Netlify.** Netlify's AI Gateway claims that
+name: on a site with the gateway active the variable is present at runtime
+holding a gateway JWT (366 characters, starting `eyJh`) rather than whatever you
+set. Requests authenticated with it are rejected by Google with "API key not
+valid", which reads exactly like a mistyped key. `GOOGLE_AI_STUDIO_KEY` is read
+first precisely because nothing else competes for it. The function still accepts
+`GEMINI_API_KEY` as a fallback, which is the right name everywhere else.
+
+That gateway is also why this function calls Google's REST endpoint directly
+rather than through the `@google/genai` SDK. The gateway recognises the SDK and
+reroutes its calls through its own model catalogue, which carries no TTS models
+— so a perfectly valid model ID came back as `unable to find suitable provider
+for gemini/gemini-3.1-flash-tts-preview`. Addressing the API at a literal URL is
+what keeps the destination a decision this code makes.
+
+If the voice is still the device one, `curl` the endpoint — the `reason` field
+names the cause, with credentials stripped out:
+
+```bash
+curl -sX POST https://<your-site>/api/tts \
+  -H 'Content-Type: application/json' -d '{"text":"hello"}'
+```
+
+A successful call returns `audio/wav` and names the model that answered in
+`X-TTS-Model`.
 
 Note on quota: every tap speaks, and the free tier is finite. Audio is cached in
 memory per session and sent with a 24-hour `Cache-Control`, but a page reload

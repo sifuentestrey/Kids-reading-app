@@ -28,5 +28,9 @@ services:
       # keeps the value out of this file and out of git.
       - key: ELEVENLABS_API_KEY
         sync: false
+      # GOOGLE_AI_STUDIO_KEY is read first; GEMINI_API_KEY still works and is
+      # the ordinary name on hosts that do not claim it for something else.
+      - key: GOOGLE_AI_STUDIO_KEY
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
