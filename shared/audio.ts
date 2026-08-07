@@ -51,6 +51,23 @@ export function pcmToWav(
   return Buffer.concat([header, pcmBuffer]);
 }
 
+/**
+ * Gemini's TTS models, in preference order.
+ *
+ * These are preview IDs, and preview IDs are retired without notice — and which
+ * of them a given API key is allowed to call depends on the project behind it.
+ * A single hardcoded model is therefore a single point of failure for the whole
+ * feature, so callers walk this list and take the first that answers.
+ *
+ * Newest first: 3.1 is the most natural read, and the 2.5 pair are the stable
+ * ones that have been generally available the longest.
+ */
+export const TTS_MODELS = [
+  'gemini-3.1-flash-tts-preview',
+  'gemini-2.5-flash-preview-tts',
+  'gemini-2.5-pro-preview-tts',
+] as const;
+
 /** Gemini's prebuilt TTS voices. Anything else is rejected by the API. */
 export const GEMINI_VOICES = ['Kore', 'Puck', 'Fenrir', 'Zephyr', 'Charon'] as const;
 
