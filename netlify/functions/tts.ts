@@ -1,5 +1,9 @@
-import { GoogleGenAI, Modality } from '@google/genai';
-import { NARRATOR_STYLE, TTS_MODELS, pcmToWav, resolveGeminiVoice } from '../../shared/audio';
+import {
+  GeminiTtsError,
+  TTS_MODELS,
+  resolveGeminiVoice,
+  synthesizeGeminiSpeech,
+} from '../../shared/audio';
 
 /**
  * Studio text-to-speech for the static deployment.
@@ -11,41 +15,53 @@ import { NARRATOR_STYLE, TTS_MODELS, pcmToWav, resolveGeminiVoice } from '../../
  * the client needs no changes, while keeping the key server-side where a browser
  * can never read it.
  *
- * It deliberately mirrors `server.ts`'s Gemini branch — same models, same voices,
- * same narrator style instruction — so the voice does not change depending on
- * which way the app happens to be deployed.
- *
  * ElevenLabs is not implemented here. The Express path supports it and can be
  * added if Gemini's voices prove insufficient, but shipping one provider that is
  * verified beats two where the second is guesswork.
  */
 
-/** Reused across warm invocations so each request does not rebuild the client. */
-let client: GoogleGenAI | null = null;
+/**
+ * Where the key may come from, in order of preference.
+ *
+ * `GEMINI_API_KEY` is listed second because Netlify's AI Gateway claims that
+ * name: on a site with the gateway active the variable is present and holds a
+ * gateway token, not a Google key, so reading it first means a correctly
+ * configured site can still end up authenticating against the wrong service.
+ * `GOOGLE_AI_STUDIO_KEY` is a name nothing else competes for, which is the whole
+ * reason it exists.
+ */
+const KEY_VARS = ['GOOGLE_AI_STUDIO_KEY', 'GEMINI_API_KEY'] as const;
 
-function getClient(apiKey: string): GoogleGenAI {
-  if (!client) {
-    client = new GoogleGenAI({ apiKey });
+/**
+ * Keys from Google AI Studio are `AIza` followed by 35 characters. Checking the
+ * shape lets a misconfiguration be named — a gateway token, a truncated paste —
+ * instead of surfacing as a generic 400 from an API that will not say which of
+ * those it was.
+ */
+const looksLikeStudioKey = (key: string) => /^AIza[A-Za-z0-9_-]{35}$/.test(key);
+
+function resolveKey(): { key: string; source: string } | null {
+  for (const name of KEY_VARS) {
+    // `.trim()` is deliberate. A key pasted from a terminal can carry a trailing
+    // newline, which is a non-empty string that fails authentication — a more
+    // confusing failure than having no key at all.
+    const value = process.env[name]?.trim();
+    if (value) return { key: value, source: name };
   }
-  return client;
+  return null;
 }
 
 /**
  * Strip anything that looks like a credential out of an upstream error before it
- * reaches the browser.
- *
- * This matters because Google's client puts the API key in the request URL, and
- * some of its errors quote that URL back. The reason text is genuinely useful for
- * telling "wrong key" apart from "quota gone" apart from "model not enabled" —
- * that distinction is the whole reason this is reported at all — but it is worth
- * nothing if shipping it hands out the key.
+ * reaches the browser. The reason text is what tells "wrong key" apart from
+ * "quota gone" apart from "model not enabled", and it is worth nothing if
+ * shipping it hands out the key.
  */
 function redact(err: unknown, apiKey: string): string {
   const raw = err instanceof Error ? err.message : String(err);
   return raw
     .split(apiKey)
     .join('[key]')
-    // Any other long opaque token: query-string values and bearer-ish blobs.
     .replace(/[A-Za-z0-9_-]{25,}/g, '[redacted]')
     .slice(0, 300);
 }
@@ -62,21 +78,29 @@ const fallback = (message: string, status = 200, reason?: string) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
+/**
+ * Netlify kills a synchronous function at 10 seconds. Budgeting under that means
+ * a slow model yields to the next one and, in the worst case, the client gets a
+ * clean fallback it can act on rather than a platform 502 it cannot.
+ */
+const TOTAL_BUDGET_MS = 8_500;
+
 export default async function handler(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return fallback('Use POST.', 405);
   }
 
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+  const resolved = resolveKey();
+  if (!resolved) {
     // Not an error: the site is designed to work without a key, on the device
     // voice. Saying so plainly is what lets the client degrade cleanly.
-    //
-    // `.trim()` above is deliberate. A key pasted from a terminal can carry a
-    // trailing newline, which would otherwise be a non-empty string that fails
-    // authentication — a more confusing failure than having no key at all.
-    return fallback('No GEMINI_API_KEY configured; using browser speech synthesis.');
+    return fallback(
+      'No Gemini API key configured; using browser speech synthesis.',
+      200,
+      `set one of ${KEY_VARS.join(' or ')}`
+    );
   }
+  const { key, source } = resolved;
 
   let body: { text?: unknown; voiceId?: unknown };
   try {
@@ -91,41 +115,37 @@ export default async function handler(request: Request): Promise<Response> {
   }
 
   const voiceName = resolveGeminiVoice(body.voiceId);
-  const ai = getClient(apiKey);
 
-  // Preview model IDs come and go, and which ones a given key may call depends on
-  // the project behind it. Trying the list in order means a retired or ungranted
-  // model costs one extra call rather than taking the whole feature down — which
-  // is exactly what a hardcoded single model did.
+  // Preview model IDs are retired without notice, and which ones a given key may
+  // call depends on the project behind it. Trying the list in order means a
+  // retired or ungranted model costs one extra call rather than taking the whole
+  // feature down, which is exactly what a hardcoded single model did.
   const failures: string[] = [];
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
 
   for (const model of TTS_MODELS) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 500) {
+      failures.push(`${model}: skipped, out of time`);
+      continue;
+    }
+
     try {
-      const result = await ai.models.generateContent({
+      const wav = await synthesizeGeminiSpeech({
+        apiKey: key,
+        text,
         model,
-        contents: [{ parts: [{ text: `${NARRATOR_STYLE} ${text}` }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName } },
-          },
-        },
+        voiceName,
+        signal: AbortSignal.timeout(remaining),
       });
-
-      const base64Audio = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!base64Audio) {
-        failures.push(`${model}: no audio in response`);
-        continue;
-      }
-
-      const wav = pcmToWav(Buffer.from(base64Audio, 'base64'));
 
       return new Response(new Uint8Array(wav), {
         status: 200,
         headers: {
           'Content-Type': 'audio/wav',
-          // The same phrases repeat constantly — lesson prompts, the room's lines
-          // — so letting the browser reuse them keeps quota and latency down.
+          // The same phrases repeat constantly — lesson prompts, the room's
+          // lines — so letting the browser reuse them keeps quota and latency
+          // down.
           'Cache-Control': 'public, max-age=86400',
           // Which model actually answered, for when the voice changes character
           // and nobody can tell why.
@@ -133,13 +153,28 @@ export default async function handler(request: Request): Promise<Response> {
         },
       });
     } catch (err) {
-      failures.push(`${model}: ${redact(err, apiKey)}`);
+      failures.push(`${model}: ${redact(err, key)}`);
+      if (err instanceof GeminiTtsError && /API_KEY_INVALID|HTTP 40[13]/.test(err.message)) {
+        // Rejected credentials, not a bad model — note Google answers a bad key
+        // with 400, not 401, so the status alone is not enough to recognise it.
+        // Trying the other two would fail identically and only burn the budget.
+        break;
+      }
     }
   }
 
   // Quota exhaustion and an invalid key both land here, which are the likeliest
   // failures in practice. The child keeps reading on the device voice rather than
   // hitting silence, and the reason says which one it was.
-  console.warn('Gemini TTS failed:', failures.join(' | '));
-  return fallback('Gemini TTS unavailable; using browser speech synthesis.', 200, failures.join(' | '));
+  const keyNote = looksLikeStudioKey(key)
+    ? `key from ${source} (well-formed)`
+    : `key from ${source} does NOT look like a Google AI Studio key ` +
+      `(expected AIza + 35 chars, got ${key.length} chars starting "${key.slice(0, 4)}")`;
+
+  console.warn('Gemini TTS failed:', keyNote, '|', failures.join(' | '));
+  return fallback(
+    'Gemini TTS unavailable; using browser speech synthesis.',
+    200,
+    `${keyNote} | ${failures.join(' | ')}`
+  );
 }

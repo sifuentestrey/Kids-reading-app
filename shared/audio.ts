@@ -90,3 +90,87 @@ export function resolveGeminiVoice(requested?: unknown): string {
     ? requested
     : DEFAULT_GEMINI_VOICE;
 }
+
+/**
+ * Google's Generative Language REST endpoint, written out in full and on
+ * purpose.
+ *
+ * The `@google/genai` SDK used to make this call, and on Netlify it silently
+ * did not reach Google at all: the platform's AI Gateway recognises the SDK and
+ * reroutes it through its own model catalogue, which carries no TTS models. The
+ * result was `unable to find suitable provider for gemini/...` — an error in a
+ * shape Google never emits, for a model ID that is perfectly valid. Addressing
+ * the API directly is what makes the destination something this code decides
+ * rather than something the host can quietly redecide.
+ */
+const GEMINI_REST_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+/** What the caller needs to know about a failed attempt, minus the credential. */
+export class GeminiTtsError extends Error {}
+
+/**
+ * Gemini returns `audio/L16;codec=pcm;rate=24000`. The rate is read back rather
+ * than assumed, because a WAV header that disagrees with its payload does not
+ * fail — it plays, at the wrong pitch and speed, which is a far harder bug to
+ * recognise than silence.
+ */
+function sampleRateFrom(mimeType: string | undefined): number {
+  const match = /rate=(\d+)/.exec(mimeType ?? '');
+  return match ? Number(match[1]) : 24000;
+}
+
+/**
+ * Speak `text` with Gemini, returning playable WAV bytes.
+ *
+ * Throws `GeminiTtsError` with the upstream reason on failure; callers decide
+ * whether that means falling back to the device voice.
+ */
+export async function synthesizeGeminiSpeech(options: {
+  apiKey: string;
+  text: string;
+  model: string;
+  voiceName: string;
+  signal?: AbortSignal;
+}): Promise<Buffer> {
+  const { apiKey, text, model, voiceName, signal } = options;
+
+  const response = await fetch(`${GEMINI_REST_BASE}/${model}:generateContent`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // The key goes in a header, never the query string. Google's own client
+      // puts it in the URL, which is how it ended up quoted back inside error
+      // messages that then had to be scrubbed before they could be shown.
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: `${NARRATOR_STYLE} ${text}` }] }],
+      // REST spells this `generationConfig`; the SDK spelled it `config`.
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+      },
+    }),
+    signal,
+  });
+
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new GeminiTtsError(`HTTP ${response.status}: ${raw.slice(0, 200)}`);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new GeminiTtsError(`non-JSON response: ${raw.slice(0, 120)}`);
+  }
+
+  const part = payload?.candidates?.[0]?.content?.parts?.[0];
+  const base64Audio = part?.inlineData?.data;
+  if (!base64Audio) {
+    throw new GeminiTtsError(`no audio in response: ${raw.slice(0, 200)}`);
+  }
+
+  return pcmToWav(Buffer.from(base64Audio, 'base64'), sampleRateFrom(part.inlineData?.mimeType));
+}
